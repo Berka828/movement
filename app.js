@@ -10,6 +10,7 @@
 
   const ui = document.getElementById("ui");
   const cameraSelect = document.getElementById("cameraSelect");
+  const modeSelect = document.getElementById("modeSelect");
   const startBtn = document.getElementById("startBtn");
   const burstBtn = document.getElementById("burstBtn");
   const resetBtn = document.getElementById("resetBtn");
@@ -19,18 +20,18 @@
   // CONFIG
   // =========================================================
   const CONFIG = {
-    particleCount: 1800,
-    backgroundFade: 0.085,
+    particleCount: 1850,
+    backgroundFade: 0.09,
     dragBase: 0.965,
-    baseLineWidth: 1.0,
-    maxSpeedBase: 4.2,
+    baseLineWidth: 1.3,
+    maxSpeedBase: 4.4,
     targetPullBase: 0.010,
     swirlBase: 0.014,
     noiseScaleBase: 0.006,
-    noiseStrengthBase: 0.40,
+    noiseStrengthBase: 0.42,
     spreadBase: 90,
-    burstCount: 280,
-    burstForce: 6.2,
+    burstCount: 320,
+    burstForce: 6.6,
     poseSmoothing: 0.16,
     energySmoothing: 0.10,
     spreadSmoothing: 0.12,
@@ -79,7 +80,7 @@
     rawTargetX: W * 0.5,
     rawTargetY: H * 0.5,
     prevRawTargetX: W * 0.5,
-    prevRawTargetY: W * 0.5,
+    prevRawTargetY: H * 0.5,
     velocityMag: 0,
     energy: 0.1,
     rawEnergy: 0.1,
@@ -99,7 +100,7 @@
     stillness: 0,
     currentMode: "CALM",
     modeSince: performance.now(),
-    mirrorActive: false,
+    lockedMode: "AUTO",
     galaxySpin: 0,
     lastPoseSeenAt: 0
   };
@@ -110,7 +111,7 @@
   const motionCtx = motionCanvas.getContext("2d", { willReadFrequently: true });
 
   // =========================================================
-  // UTIL
+  // UTILS
   // =========================================================
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -154,21 +155,21 @@
   resize();
 
   // =========================================================
-  // EXTRA OVERLAYS
+  // OVERLAYS
   // =========================================================
   const instructionOverlay = document.createElement("div");
   instructionOverlay.id = "instructionOverlay";
   instructionOverlay.innerHTML = `
-  <div id="instructionInner">
-    <div class="line museum">BRONX CHILDREN’S MUSEUM</div>
-    <div class="line big">MOVE THE ENERGY</div>
-    <div class="line">Use your body to explore light, motion, color, and sound.</div>
-    <div class="line">Move one hand to guide the flow.</div>
-    <div class="line">Lift your hands to brighten the energy.</div>
-    <div class="line">Stretch wide to discover new modes.</div>
-    <div class="line">Fast movement creates bigger reactions.</div>
-  </div>
-`;
+    <div id="instructionInner">
+      <div class="line museum">BRONX CHILDREN’S MUSEUM</div>
+      <div class="line big">MOVE THE ENERGY</div>
+      <div class="line">Use your body to explore light, motion, color, and sound.</div>
+      <div class="line">Guide the flow with your hand.</div>
+      <div class="line">Lift your hands to brighten the energy.</div>
+      <div class="line">In Auto mode, movement unlocks different energy worlds.</div>
+      <div class="line">Move fast to make bigger reactions.</div>
+    </div>
+  `;
   document.body.appendChild(instructionOverlay);
 
   Object.assign(instructionOverlay.style, {
@@ -185,69 +186,69 @@
 
   const instructionInner = instructionOverlay.querySelector("#instructionInner");
   Object.assign(instructionInner.style, {
-    color: "white",
+    color: "#123",
     textAlign: "center",
     fontFamily: "Arial, sans-serif",
-    textShadow: "0 0 12px rgba(0,0,0,0.6), 0 0 28px rgba(0,120,255,0.35)",
+    textShadow: "0 2px 10px rgba(255,255,255,0.65), 0 0 28px rgba(0,184,255,0.18)",
     letterSpacing: "1px",
-    maxWidth: "900px",
+    maxWidth: "980px",
     padding: "24px"
   });
 
- Array.from(instructionInner.querySelectorAll(".line")).forEach((line, index) => {
-  let fontSize = "22px";
-  let fontWeight = "500";
-  let color = "#ffffff";
-  let margin = "10px 0";
+  Array.from(instructionInner.querySelectorAll(".line")).forEach((line) => {
+    let fontSize = "22px";
+    let fontWeight = "500";
+    let color = "#17324d";
+    let margin = "10px 0";
 
-  if (line.classList.contains("museum")) {
-    fontSize = "16px";
-    fontWeight = "700";
-    color = "#8fe9ff";
-    margin = "0 0 10px 0";
-    line.style.letterSpacing = "2px";
-  }
+    if (line.classList.contains("museum")) {
+      fontSize = "16px";
+      fontWeight = "700";
+      color = "#00a8d8";
+      margin = "0 0 10px 0";
+      line.style.letterSpacing = "2px";
+    }
 
-  if (line.classList.contains("big")) {
-    fontSize = "76px";
-    fontWeight = "800";
-    color = "#ffffff";
-    margin = "0 0 18px 0";
-    line.style.lineHeight = "0.95";
-    line.style.textShadow = "0 0 24px rgba(0,184,255,0.22), 0 0 30px rgba(255,0,140,0.12)";
-  }
+    if (line.classList.contains("big")) {
+      fontSize = "76px";
+      fontWeight = "800";
+      color = "#0f2a44";
+      margin = "0 0 18px 0";
+      line.style.lineHeight = "0.95";
+      line.style.textShadow = "0 0 24px rgba(0,184,255,0.16), 0 0 34px rgba(255,0,140,0.10)";
+    }
 
-  Object.assign(line.style, {
-    margin,
-    fontSize,
-    fontWeight,
-    color
+    Object.assign(line.style, {
+      margin,
+      fontSize,
+      fontWeight,
+      color
+    });
   });
-});
 
   const modeBadge = document.createElement("div");
   modeBadge.id = "modeBadge";
-  modeBadge.textContent = "MODE: CALM";
+  modeBadge.textContent = "MODE: GLOW";
   document.body.appendChild(modeBadge);
 
-Object.assign(modeBadge.style, {
-  position: "fixed",
-  left: "20px",
-  top: "20px",
-  zIndex: "25",
-  color: "#ffffff",
-  fontFamily: "Arial, sans-serif",
-  fontSize: "15px",
-  letterSpacing: "1px",
-  padding: "10px 16px",
-  borderRadius: "999px",
-  background: "linear-gradient(180deg, rgba(0,184,255,0.24), rgba(255,0,140,0.16))",
-  border: "1px solid rgba(255,255,255,0.12)",
-  backdropFilter: "blur(6px)",
-  boxShadow: "0 0 20px rgba(0,184,255,0.12)",
-  opacity: "0.95",
-  transition: "opacity 0.5s ease"
-});
+  Object.assign(modeBadge.style, {
+    position: "fixed",
+    left: "20px",
+    top: "20px",
+    zIndex: "25",
+    color: "#11324f",
+    fontFamily: "Arial, sans-serif",
+    fontSize: "15px",
+    letterSpacing: "1px",
+    padding: "10px 16px",
+    borderRadius: "999px",
+    background: "linear-gradient(180deg, rgba(0,184,255,0.18), rgba(255,0,140,0.10))",
+    border: "1px solid rgba(0,184,255,0.18)",
+    backdropFilter: "blur(6px)",
+    boxShadow: "0 0 20px rgba(0,184,255,0.10)",
+    opacity: "0.96",
+    transition: "opacity 0.5s ease"
+  });
 
   // =========================================================
   // VIDEO STYLE
@@ -264,7 +265,8 @@ Object.assign(modeBadge.style, {
     video.style.objectFit = "cover";
     video.style.borderRadius = "14px";
     video.style.zIndex = "22";
-    video.style.boxShadow = "0 0 20px rgba(0,0,0,0.3)";
+    video.style.border = "2px solid rgba(0,184,255,0.25)";
+    video.style.boxShadow = "0 0 20px rgba(0,184,255,0.12)";
     if (debugBtn) {
       debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
     }
@@ -284,7 +286,6 @@ Object.assign(modeBadge.style, {
 
   function initAudio() {
     if (audioCtx) return;
-
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
 
@@ -297,16 +298,16 @@ Object.assign(modeBadge.style, {
     energyGain = audioCtx.createGain();
 
     humOsc.type = "sine";
-    humOsc.frequency.value = 72;
+    humOsc.frequency.value = 78;
 
     filterNode.type = "lowpass";
-    filterNode.frequency.value = 500;
+    filterNode.frequency.value = 600;
     filterNode.Q.value = 0.8;
 
     humGain.gain.value = 0.0001;
 
     energyOsc.type = "triangle";
-    energyOsc.frequency.value = 180;
+    energyOsc.frequency.value = 190;
     energyGain.gain.value = 0.0001;
 
     humOsc.connect(filterNode);
@@ -338,34 +339,33 @@ Object.assign(modeBadge.style, {
     const brightness = 1 - state.leftHandYNorm;
     const idleAmt = clamp(1 - e * 2.5, 0, 1);
 
-    humOsc.frequency.setTargetAtTime(65 + idleAmt * 18, audioCtx.currentTime, 0.08);
-    humGain.gain.setTargetAtTime(0.01 + idleAmt * 0.02, audioCtx.currentTime, 0.12);
+    humOsc.frequency.setTargetAtTime(72 + idleAmt * 16, audioCtx.currentTime, 0.08);
+    humGain.gain.setTargetAtTime(0.008 + idleAmt * 0.018, audioCtx.currentTime, 0.12);
 
-    energyOsc.frequency.setTargetAtTime(170 + e * 420 + brightness * 120, audioCtx.currentTime, 0.05);
-    energyGain.gain.setTargetAtTime(0.001 + e * 0.035, audioCtx.currentTime, 0.08);
+    energyOsc.frequency.setTargetAtTime(180 + e * 440 + brightness * 110, audioCtx.currentTime, 0.05);
+    energyGain.gain.setTargetAtTime(0.001 + e * 0.03, audioCtx.currentTime, 0.08);
 
-    filterNode.frequency.setTargetAtTime(350 + e * 900, audioCtx.currentTime, 0.08);
+    filterNode.frequency.setTargetAtTime(450 + e * 1100, audioCtx.currentTime, 0.08);
   }
 
   function playBurstSound() {
     if (!audioCtx) return;
 
     const t = audioCtx.currentTime;
-
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
     const filter = audioCtx.createBiquadFilter();
 
     osc.type = "square";
-    osc.frequency.setValueAtTime(240, t);
-    osc.frequency.exponentialRampToValueAtTime(75, t + 0.18);
+    osc.frequency.setValueAtTime(260, t);
+    osc.frequency.exponentialRampToValueAtTime(82, t + 0.18);
 
     filter.type = "bandpass";
-    filter.frequency.value = 800;
+    filter.frequency.value = 900;
     filter.Q.value = 1.2;
 
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(0.07, t + 0.01);
+    gain.gain.linearRampToValueAtTime(0.055, t + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
 
     osc.connect(filter);
@@ -464,6 +464,24 @@ Object.assign(modeBadge.style, {
   }
 
   // =========================================================
+  // MODE LABELS
+  // =========================================================
+  function displayModeName(mode) {
+    if (mode === "CALM") return "GLOW";
+    if (mode === "CHAOS") return "STORM";
+    if (mode === "MIRROR") return "TWIN";
+    if (mode === "GALAXY") return "SPACE";
+    return mode;
+  }
+
+  function setMode(mode) {
+    if (state.currentMode === mode) return;
+    state.currentMode = mode;
+    state.modeSince = nowMs();
+    modeBadge.textContent = `MODE: ${displayModeName(mode)}`;
+  }
+
+  // =========================================================
   // PARTICLES
   // =========================================================
   class Particle {
@@ -494,7 +512,6 @@ Object.assign(modeBadge.style, {
       const ny = dy / d;
 
       const mode = state.currentMode;
-      const speedHeat = clamp(state.velocityMag / 180, 0, 1);
       const leftHigh = 1 - state.leftHandYNorm;
 
       let drag = CONFIG.dragBase;
@@ -507,29 +524,29 @@ Object.assign(modeBadge.style, {
       let galaxySpiral = 0;
 
       if (mode === "CALM") {
-        drag = 0.975;
-        swirl *= 0.65;
-        targetPull *= 0.9;
-        noiseStrength *= 0.55;
-        maxSpeed *= 0.85;
+        drag = 0.976;
+        swirl *= 0.7;
+        targetPull *= 0.92;
+        noiseStrength *= 0.58;
+        maxSpeed *= 0.88;
       } else if (mode === "CHAOS") {
         drag = 0.952;
-        swirl *= 1.9;
-        targetPull *= 1.4;
-        noiseStrength *= 1.9;
-        maxSpeed *= 1.6;
+        swirl *= 1.95;
+        targetPull *= 1.42;
+        noiseStrength *= 2.0;
+        maxSpeed *= 1.7;
       } else if (mode === "MIRROR") {
         drag = 0.967;
-        swirl *= 1.2;
+        swirl *= 1.25;
         targetPull *= 1.05;
-        noiseStrength *= 0.9;
+        noiseStrength *= 0.95;
         orbitBoost = 1.35;
       } else if (mode === "GALAXY") {
-        drag = 0.971;
-        swirl *= 1.35;
+        drag = 0.972;
+        swirl *= 1.38;
         targetPull *= 0.72;
-        noiseStrength *= 0.65;
-        maxSpeed *= 0.95;
+        noiseStrength *= 0.68;
+        maxSpeed *= 0.98;
         galaxySpiral = 0.04;
       }
 
@@ -587,37 +604,39 @@ Object.assign(modeBadge.style, {
       const dx = this.x - this.px;
       const dy = this.y - this.py;
       const speed = Math.sqrt(dx * dx + dy * dy);
-      const moveHeat = clamp(speed / 5.5, 0, 1);
+      const moveHeat = clamp(speed / 5.3, 0, 1);
       const handBright = 1 - state.leftHandYNorm;
 
       let hue;
       let sat = 100;
-      let light = 58 + state.energy * 16 + handBright * 12;
+      let light = 48 + state.energy * 10 + handBright * 12;
+      let alpha = clamp(0.08 + speed * 0.035 + state.energy * 0.12, 0.06, 0.42);
 
       if (state.currentMode === "CALM") {
-        hue = 210 + moveHeat * 25 + this.seed * 8;
-        sat = 85;
-        light = 52 + handBright * 8 + moveHeat * 6;
-      } else if (state.currentMode === "CHAOS") {
-        hue = 18 + moveHeat * 35 + handBright * 18 + (t * 0.04 + this.seed * 40) % 30;
-        sat = 100;
-        light = 55 + handBright * 18 + moveHeat * 14;
-      } else if (state.currentMode === "MIRROR") {
-        hue = 290 + moveHeat * 35 + this.seed * 16;
-        sat = 90;
-        light = 58 + handBright * 10;
-      } else {
-        hue = 220 + state.galaxySpin * 100 + this.seed * 28;
+        hue = 198 + moveHeat * 26 + this.seed * 6;
         sat = 95;
-        light = 55 + handBright * 12 + moveHeat * 8;
+        light = 44 + handBright * 10 + moveHeat * 7;
+        alpha *= 0.95;
+      } else if (state.currentMode === "CHAOS") {
+        hue = 16 + moveHeat * 38 + handBright * 15 + (t * 0.04 + this.seed * 40) % 24;
+        sat = 100;
+        light = 48 + handBright * 14 + moveHeat * 12;
+        alpha *= 1.02;
+      } else if (state.currentMode === "MIRROR") {
+        hue = 304 + moveHeat * 30 + this.seed * 12;
+        sat = 92;
+        light = 48 + handBright * 10 + moveHeat * 8;
+      } else {
+        hue = 228 + state.galaxySpin * 100 + this.seed * 20;
+        sat = 100;
+        light = 46 + handBright * 12 + moveHeat * 8;
       }
 
-      const alpha = clamp(0.05 + speed * 0.03 + state.energy * 0.14, 0.03, 0.38);
       const lw =
         CONFIG.baseLineWidth +
-        this.width * 0.8 +
-        state.spread * 1.8 +
-        speed * 0.03;
+        this.width * 0.9 +
+        state.spread * 2.0 +
+        speed * 0.04;
 
       ctx.strokeStyle = `hsla(${hue % 360}, ${sat}%, ${light}%, ${alpha})`;
       ctx.lineWidth = lw;
@@ -629,7 +648,7 @@ Object.assign(modeBadge.style, {
       if (state.currentMode === "MIRROR") {
         const mx1 = W - this.px;
         const mx2 = W - this.x;
-        ctx.strokeStyle = `hsla(${(hue + 18) % 360}, ${sat}%, ${light}%, ${alpha * 0.72})`;
+        ctx.strokeStyle = `hsla(${(hue + 20) % 360}, ${sat}%, ${light + 2}%, ${alpha * 0.78})`;
         ctx.beginPath();
         ctx.moveTo(mx1, this.py);
         ctx.lineTo(mx2, this.y);
@@ -644,7 +663,7 @@ Object.assign(modeBadge.style, {
     for (let i = 0; i < CONFIG.burstCount; i++) {
       const p = particles[(Math.random() * particles.length) | 0];
       const a = Math.random() * Math.PI * 2;
-      const f = Math.random() * CONFIG.burstForce + 1.0;
+      const f = Math.random() * CONFIG.burstForce + 1.2;
 
       p.x = x;
       p.y = y;
@@ -660,21 +679,19 @@ Object.assign(modeBadge.style, {
     for (const p of particles) {
       p.reset(Math.random() * W, Math.random() * H);
     }
-    ctx.fillStyle = "black";
+    ctx.fillStyle = "rgba(255,255,255,1)";
     ctx.fillRect(0, 0, W, H);
   }
 
   // =========================================================
   // MODE CONTROL
   // =========================================================
-  function setMode(mode) {
-    if (state.currentMode === mode) return;
-    state.currentMode = mode;
-    state.modeSince = nowMs();
-    modeBadge.textContent = `MODE: ${mode}`;
-  }
-
   function updateModeLogic() {
+    if (state.lockedMode && state.lockedMode !== "AUTO") {
+      setMode(state.lockedMode);
+      return;
+    }
+
     const t = nowMs();
     const heldLongEnough = (t - state.modeSince) > CONFIG.stateHoldMs;
 
@@ -921,33 +938,33 @@ Object.assign(modeBadge.style, {
   // =========================================================
   function drawBackgroundGlow(t) {
     const pulse = 0.5 + Math.sin(t * 0.001) * 0.5;
-    let hue = 215;
-    let alpha = 0.06;
+    let hue = 195;
+    let alpha = 0.07;
 
     if (state.currentMode === "CALM") {
-      hue = 210;
-      alpha = 0.05;
+      hue = 195;
+      alpha = 0.065;
     } else if (state.currentMode === "CHAOS") {
-      hue = 18;
+      hue = 22;
       alpha = 0.08;
     } else if (state.currentMode === "MIRROR") {
-      hue = 290;
-      alpha = 0.06;
+      hue = 305;
+      alpha = 0.07;
     } else if (state.currentMode === "GALAXY") {
-      hue = 235 + Math.sin(t * 0.0005) * 20;
-      alpha = 0.075;
+      hue = 232 + Math.sin(t * 0.0005) * 18;
+      alpha = 0.08;
     }
 
     const grad = ctx.createRadialGradient(
       state.targetX, state.targetY, 0,
-      state.targetX, state.targetY, Math.max(W, H) * 0.45
+      state.targetX, state.targetY, Math.max(W, H) * 0.42
     );
-    grad.addColorStop(0, `hsla(${hue}, 100%, 60%, ${alpha + pulse * 0.03})`);
-    grad.addColorStop(0.4, `hsla(${hue}, 100%, 35%, ${alpha * 0.4})`);
-    grad.addColorStop(1, "rgba(0,0,0,0)");
+    grad.addColorStop(0, `hsla(${hue}, 100%, 62%, ${alpha + pulse * 0.03})`);
+    grad.addColorStop(0.42, `hsla(${hue}, 100%, 58%, ${alpha * 0.35})`);
+    grad.addColorStop(1, "rgba(255,255,255,0)");
 
     ctx.save();
-    ctx.globalCompositeOperation = "screen";
+    ctx.globalCompositeOperation = "multiply";
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, W, H);
     ctx.restore();
@@ -964,7 +981,7 @@ Object.assign(modeBadge.style, {
       const x = state.targetX + Math.cos(a) * r;
       const y = state.targetY + Math.sin(a) * r;
       const size = 1.2 + (i % 3);
-      ctx.fillStyle = `rgba(255,255,255,${0.18 + (i % 4) * 0.06})`;
+      ctx.fillStyle = `rgba(30,50,90,${0.14 + (i % 4) * 0.05})`;
       ctx.beginPath();
       ctx.arc(x, y, size, 0, Math.PI * 2);
       ctx.fill();
@@ -978,7 +995,7 @@ Object.assign(modeBadge.style, {
     ctx.save();
 
     if (state.wristLeft) {
-      ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      ctx.strokeStyle = "rgba(0,145,255,0.8)";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(state.wristLeft.x, state.wristLeft.y, 10, 0, Math.PI * 2);
@@ -986,7 +1003,7 @@ Object.assign(modeBadge.style, {
     }
 
     if (state.wristRight) {
-      ctx.strokeStyle = "rgba(0,255,255,0.8)";
+      ctx.strokeStyle = "rgba(255,0,140,0.8)";
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.arc(state.wristRight.x, state.wristRight.y, 10, 0, Math.PI * 2);
@@ -994,24 +1011,24 @@ Object.assign(modeBadge.style, {
     }
 
     if (state.shoulderCenter) {
-      ctx.fillStyle = "rgba(255,255,255,0.8)";
+      ctx.fillStyle = "rgba(17,50,79,0.85)";
       ctx.beginPath();
       ctx.arc(state.shoulderCenter.x, state.shoulderCenter.y, 5, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.strokeStyle = "rgba(17,50,79,0.25)";
     ctx.beginPath();
     ctx.arc(state.targetX, state.targetY, 18 + state.spread * 20, 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.fillStyle = "rgba(17,50,79,0.95)";
     ctx.font = "14px Arial";
     ctx.fillText(`Energy: ${state.energy.toFixed(2)}`, 20, 64);
     ctx.fillText(`Spread: ${state.spread.toFixed(2)}`, 20, 84);
     ctx.fillText(`Velocity: ${state.velocityMag.toFixed(1)}`, 20, 104);
     ctx.fillText(`Pose: ${state.activePose ? "ON" : "FALLBACK"}`, 20, 124);
-    ctx.fillText(`Mode: ${state.currentMode}`, 20, 144);
+    ctx.fillText(`Mode: ${displayModeName(state.currentMode)}`, 20, 144);
     ctx.fillText(`Hands Up: ${state.handsUp}`, 20, 164);
     ctx.fillText(`Hands Wide: ${state.handsWide}`, 20, 184);
 
@@ -1034,7 +1051,7 @@ Object.assign(modeBadge.style, {
       );
     }
 
-    const pulse = 0.9 + Math.sin(t * CONFIG.instructionPulseSpeed) * 0.1;
+    const pulse = 0.97 + Math.sin(t * CONFIG.instructionPulseSpeed) * 0.03;
     instructionOverlay.style.opacity = String(opacity);
     instructionInner.style.transform = `scale(${pulse})`;
   }
@@ -1101,13 +1118,13 @@ Object.assign(modeBadge.style, {
     updateModeLogic();
     updateAudio();
 
-    ctx.fillStyle = `rgba(0,0,0,${CONFIG.backgroundFade})`;
+    ctx.fillStyle = `rgba(255,255,255,${CONFIG.backgroundFade})`;
     ctx.fillRect(0, 0, W, H);
 
     drawBackgroundGlow(t);
     drawGalaxyStars(t);
 
-    ctx.globalCompositeOperation = "lighter";
+    ctx.globalCompositeOperation = "multiply";
 
     for (let i = 0; i < particles.length; i++) {
       particles[i].update(dt, t);
@@ -1144,7 +1161,7 @@ Object.assign(modeBadge.style, {
       await startCamera(selectedDeviceId || (cameraSelect ? cameraSelect.value : undefined) || undefined);
       await initDetector();
 
-      ctx.fillStyle = "black";
+      ctx.fillStyle = "rgba(255,255,255,1)";
       ctx.fillRect(0, 0, W, H);
 
       started = true;
@@ -1161,7 +1178,7 @@ Object.assign(modeBadge.style, {
       console.error(err);
       if (startBtn) {
         startBtn.disabled = false;
-        startBtn.textContent = "Start Experience";
+        startBtn.textContent = "Start";
       }
       alert("Could not start camera/pose detection. Check camera permissions and reload.");
     }
@@ -1215,6 +1232,20 @@ Object.assign(modeBadge.style, {
     });
   }
 
+  if (modeSelect) {
+    modeSelect.addEventListener("change", () => {
+      state.lockedMode = modeSelect.value;
+
+      if (state.lockedMode === "AUTO") {
+        updateModeLogic();
+      } else {
+        setMode(state.lockedMode);
+      }
+
+      scheduleKioskHide();
+    });
+  }
+
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", async () => {
       try {
@@ -1225,7 +1256,7 @@ Object.assign(modeBadge.style, {
     });
   }
 
-  window.addEventListener("keydown", async e => {
+  window.addEventListener("keydown", async (e) => {
     const key = e.key.toLowerCase();
 
     if (key === "b") {
@@ -1281,13 +1312,16 @@ Object.assign(modeBadge.style, {
       console.error("Could not populate cameras:", err);
     }
 
+    if (modeSelect) {
+      modeSelect.value = "AUTO";
+    }
+
     try {
       initAudio();
     } catch (err) {
       console.warn("Audio init skipped:", err);
     }
 
-    // Try auto-start lightly; browser may block until user gesture.
     setTimeout(async () => {
       if (!started) {
         try {
