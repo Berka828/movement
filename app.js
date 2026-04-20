@@ -10,9 +10,10 @@
 
   const ui = document.getElementById("ui");
   const cameraSelect = document.getElementById("cameraSelect");
+  const revealTypeSelect = document.getElementById("revealTypeSelect");
+  const fogStyleSelect = document.getElementById("fogStyleSelect");
   const modeSelect = document.getElementById("modeSelect");
   const startBtn = document.getElementById("startBtn");
-  const burstBtn = document.getElementById("burstBtn");
   const resetBtn = document.getElementById("resetBtn");
   const soundBtn = document.getElementById("soundBtn");
   const debugBtn = document.getElementById("debugBtn");
@@ -22,6 +23,8 @@
   // =========================================================
   const CONFIG = {
     logoPath: "bxcm-logo.png",
+    imagePath: "reveal-image.jpg",
+    videoPath: "reveal-video.mp4",
 
     cameraWidth: 640,
     cameraHeight: 480,
@@ -31,33 +34,18 @@
     diffStep: 6,
     diffThreshold: 34,
 
-    // much slower reveal
-    eraseRadiusBase: 10,
-    eraseRadiusMax: 28,
-    eraseStrengthBase: 0.14,
-    eraseStrengthMax: 0.26,
+    eraseRadiusBase: 9,
+    eraseRadiusMax: 24,
+    eraseStrengthBase: 0.10,
+    eraseStrengthMax: 0.18,
 
-    // fog returns a bit so it takes real effort
-    fogReturnAlphaBase: 0.0085,
-
-    // soft dust layers
-    fogTextureDensity: 34,
-    fogTextureSizeMin: 70,
-    fogTextureSizeMax: 220,
-
-    // soft edge glow instead of particles
-    bloomLifeMin: 16,
-    bloomLifeMax: 42,
-    bloomMax: 120,
+    fogReturnAlphaBase: 0.0105,
 
     revealCheckEvery: 10,
     autoHideMs: 5000,
     introFadeAfterMs: 8500
   };
 
-  // =========================================================
-  // BxCM COLORS
-  // =========================================================
   const BXCM_COLORS = [
     "#f8c400",
     "#f28c1b",
@@ -66,19 +54,6 @@
     "#4a9a3f",
     "#4b2ca3"
   ];
-
-  function pick(arr) {
-    return arr[(Math.random() * arr.length) | 0];
-  }
-
-  function hexToRGBA(hex, alpha) {
-    const h = hex.replace("#", "");
-    const bigint = parseInt(h, 16);
-    const r = (bigint >> 16) & 255;
-    const g = (bigint >> 8) & 255;
-    const b = bigint & 255;
-    return `rgba(${r},${g},${b},${alpha})`;
-  }
 
   // =========================================================
   // STATE
@@ -100,6 +75,8 @@
   let lastCelebrationAt = 0;
 
   const state = {
+    revealType: "logo",
+    fogStyle: "smoke",
     mode: "AUTO",
     autoModeResolved: "GLOW",
     motionEnergy: 0,
@@ -109,18 +86,30 @@
   };
 
   // =========================================================
-  // LOGO IMAGE
+  // ASSETS
   // =========================================================
   const logoImg = new Image();
   let logoReady = false;
   logoImg.onload = () => {
     logoReady = true;
-    renderLogoLayer();
-  };
-  logoImg.onerror = () => {
-    console.warn("Could not load logo at:", CONFIG.logoPath);
+    renderHiddenLayer();
   };
   logoImg.src = CONFIG.logoPath;
+
+  const revealImg = new Image();
+  let revealImgReady = false;
+  revealImg.onload = () => {
+    revealImgReady = true;
+    renderHiddenLayer();
+  };
+  revealImg.src = CONFIG.imagePath;
+
+  const revealVideo = document.createElement("video");
+  revealVideo.src = CONFIG.videoPath;
+  revealVideo.loop = true;
+  revealVideo.muted = true;
+  revealVideo.playsInline = true;
+  revealVideo.crossOrigin = "anonymous";
 
   // =========================================================
   // OFFSCREEN CANVASES
@@ -131,75 +120,108 @@
   const fogCanvas = document.createElement("canvas");
   const fogCtx = fogCanvas.getContext("2d");
 
-  const logoCanvas = document.createElement("canvas");
-  const logoCtx = logoCanvas.getContext("2d");
+  const hiddenCanvas = document.createElement("canvas");
+  const hiddenCtx = hiddenCanvas.getContext("2d");
 
   const revealSampleCanvas = document.createElement("canvas");
   const revealSampleCtx = revealSampleCanvas.getContext("2d", { willReadFrequently: true });
 
   let prevFrame = null;
 
-  function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
-
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-
-    diffCanvas.width = CONFIG.diffWidth;
-    diffCanvas.height = CONFIG.diffHeight;
-
-    fogCanvas.width = W;
-    fogCanvas.height = H;
-
-    logoCanvas.width = W;
-    logoCanvas.height = H;
-
-    revealSampleCanvas.width = 160;
-    revealSampleCanvas.height = 90;
-
-    buildFog(true);
-    renderLogoLayer();
-  }
-
-  window.addEventListener("resize", resize);
-  resize();
-
   // =========================================================
-  // UTIL
+  // AUDIO
   // =========================================================
-  function clamp(v, min, max) {
-    return Math.max(min, Math.min(max, v));
+  let audioCtx = null;
+  let humOsc = null;
+  let humGain = null;
+
+  function initAudio() {
+    if (audioCtx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+
+    audioCtx = new AC();
+
+    humOsc = audioCtx.createOscillator();
+    humGain = audioCtx.createGain();
+    humOsc.type = "sine";
+    humOsc.frequency.value = 90;
+    humGain.gain.value = 0.0001;
+    humOsc.connect(humGain);
+    humGain.connect(audioCtx.destination);
+    humOsc.start();
   }
 
-  function lerp(a, b, t) {
-    return a + (b - a) * t;
+  async function resumeAudio() {
+    if (!audioCtx) initAudio();
+    if (audioCtx && audioCtx.state === "suspended") {
+      try {
+        await audioCtx.resume();
+      } catch (err) {
+        console.warn(err);
+      }
+    }
   }
 
-  function mapRange(v, inMin, inMax, outMin, outMax) {
-    const t = clamp((v - inMin) / (inMax - inMin), 0, 1);
-    return outMin + (outMax - outMin) * t;
-  }
+  function updateAudio() {
+    if (!audioCtx || !humOsc || !humGain) return;
 
-  function rand(min, max) {
-    return Math.random() * (max - min) + min;
+    const master = state.soundEnabled ? 1 : 0;
+    const e = state.motionEnergy;
+
+    humOsc.frequency.setTargetAtTime(82 + e * 14, audioCtx.currentTime, 0.08);
+    humGain.gain.setTargetAtTime((0.003 + e * 0.004) * master, audioCtx.currentTime, 0.12);
   }
 
   // =========================================================
-  // INTRO
+  // UI HELPERS
+  // =========================================================
+  function updateSoundButton() {
+    soundBtn.textContent = state.soundEnabled ? "Sound: On" : "Sound: Off";
+  }
+
+  function updateModeBadge() {
+    const label = state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode;
+    modeBadge.textContent = `MODE: ${label}`;
+  }
+
+  function hideUIForKiosk() {
+    if (!ui) return;
+    ui.style.transition = "opacity 0.7s ease";
+    ui.style.opacity = "0";
+    ui.style.pointerEvents = "none";
+  }
+
+  function showUI() {
+    if (!ui) return;
+    ui.style.opacity = "1";
+    ui.style.pointerEvents = "auto";
+  }
+
+  function scheduleUIHide() {
+    if (uiHideTimeout) clearTimeout(uiHideTimeout);
+    uiHideTimeout = setTimeout(() => hideUIForKiosk(), CONFIG.autoHideMs);
+  }
+
+  function fadeIntroIfNeeded(now) {
+    const elapsed = now - experienceStartedAt;
+    if (elapsed > CONFIG.introFadeAfterMs) {
+      intro.style.opacity = "0";
+      state.introVisible = false;
+    }
+  }
+
+  // =========================================================
+  // OVERLAYS
   // =========================================================
   const intro = document.createElement("div");
   intro.innerHTML = `
     <div id="bxcmIntroInner">
       <div class="museum">BRONX CHILDREN’S MUSEUM</div>
-      <div class="big">REVEAL THE LOGO</div>
-      <div class="line">Move your body to brush away the cloud.</div>
-      <div class="line">Work together to uncover BxCM.</div>
-      <div class="line">The more you move, the more appears.</div>
+      <div class="big">REVEAL WHAT’S HIDDEN</div>
+      <div class="line">Move your body to brush away the cover.</div>
+      <div class="line">Try different reveal layers and fog styles.</div>
+      <div class="line">Work together to uncover what’s underneath.</div>
     </div>
   `;
   document.body.appendChild(intro);
@@ -223,7 +245,7 @@
     color: "#17324d",
     textShadow: "0 2px 10px rgba(255,255,255,0.8), 0 0 24px rgba(31,165,220,0.18)",
     padding: "24px",
-    maxWidth: "960px"
+    maxWidth: "980px"
   });
 
   Array.from(introInner.children).forEach((el) => {
@@ -237,7 +259,7 @@
       });
     } else if (el.classList.contains("big")) {
       Object.assign(el.style, {
-        fontSize: "76px",
+        fontSize: "72px",
         fontWeight: "800",
         lineHeight: "0.95",
         color: "#0f2a44",
@@ -276,123 +298,70 @@
     transition: "opacity 0.5s ease"
   });
 
-  function updateModeBadge() {
-    const label = state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode;
-    modeBadge.textContent = `MODE: ${label}`;
+  // =========================================================
+  // RESIZE
+  // =========================================================
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    diffCanvas.width = CONFIG.diffWidth;
+    diffCanvas.height = CONFIG.diffHeight;
+
+    fogCanvas.width = W;
+    fogCanvas.height = H;
+
+    hiddenCanvas.width = W;
+    hiddenCanvas.height = H;
+
+    revealSampleCanvas.width = 160;
+    revealSampleCanvas.height = 90;
+
+    buildFog(true);
+    renderHiddenLayer();
   }
 
-  function hideUIForKiosk() {
-    if (!ui) return;
-    ui.style.transition = "opacity 0.7s ease";
-    ui.style.opacity = "0";
-    ui.style.pointerEvents = "none";
-  }
-
-  function showUI() {
-    if (!ui) return;
-    ui.style.opacity = "1";
-    ui.style.pointerEvents = "auto";
-  }
-
-  function scheduleUIHide() {
-    if (uiHideTimeout) clearTimeout(uiHideTimeout);
-    uiHideTimeout = setTimeout(() => hideUIForKiosk(), CONFIG.autoHideMs);
-  }
-
-  function fadeIntroIfNeeded(now) {
-    const elapsed = now - experienceStartedAt;
-    if (elapsed > CONFIG.introFadeAfterMs) {
-      intro.style.opacity = "0";
-      state.introVisible = false;
-    }
-  }
-
-  function updateSoundButton() {
-    if (!soundBtn) return;
-    soundBtn.textContent = state.soundEnabled ? "Sound: On" : "Sound: Off";
-  }
+  window.addEventListener("resize", resize);
+  resize();
 
   // =========================================================
-  // AUDIO
+  // MATH / UTILS
   // =========================================================
-  let audioCtx = null;
-  let humOsc = null;
-  let humGain = null;
-  let revealOsc = null;
-  let revealGain = null;
-
-  function initAudio() {
-    if (audioCtx) return;
-
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-
-    audioCtx = new AC();
-
-    humOsc = audioCtx.createOscillator();
-    humGain = audioCtx.createGain();
-    humOsc.type = "sine";
-    humOsc.frequency.value = 90;
-    humGain.gain.value = 0.0001;
-    humOsc.connect(humGain);
-    humGain.connect(audioCtx.destination);
-    humOsc.start();
-
-    revealOsc = audioCtx.createOscillator();
-    revealGain = audioCtx.createGain();
-    revealOsc.type = "triangle";
-    revealOsc.frequency.value = 180;
-    revealGain.gain.value = 0.0001;
-    revealOsc.connect(revealGain);
-    revealGain.connect(audioCtx.destination);
-    revealOsc.start();
+  function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v));
   }
 
-  async function resumeAudio() {
-    if (!audioCtx) initAudio();
-    if (audioCtx && audioCtx.state === "suspended") {
-      try {
-        await audioCtx.resume();
-      } catch (err) {
-        console.warn(err);
-      }
-    }
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
   }
 
-  function updateAudio() {
-    if (!audioCtx) return;
-
-    const targetMaster = state.soundEnabled ? 1 : 0;
-    const e = state.motionEnergy;
-    const reveal = state.revealRatio;
-
-    humOsc.frequency.setTargetAtTime(82 + e * 16, audioCtx.currentTime, 0.08);
-    humGain.gain.setTargetAtTime((0.004 + (1 - e) * 0.006) * targetMaster, audioCtx.currentTime, 0.12);
-
-    revealOsc.frequency.setTargetAtTime(150 + e * 120 + reveal * 40, audioCtx.currentTime, 0.08);
-    revealGain.gain.setTargetAtTime((0.0006 + e * 0.006 + reveal * 0.003) * targetMaster, audioCtx.currentTime, 0.08);
+  function mapRange(v, inMin, inMax, outMin, outMax) {
+    const t = clamp((v - inMin) / (inMax - inMin), 0, 1);
+    return outMin + (outMax - outMin) * t;
   }
 
-  function playCelebrateSound() {
-    if (!audioCtx || !state.soundEnabled) return;
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
+  }
 
-    const t = audioCtx.currentTime;
-    [0, 4, 7].forEach((semitones, i) => {
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
+  function pick(arr) {
+    return arr[(Math.random() * arr.length) | 0];
+  }
 
-      osc.type = "triangle";
-      osc.frequency.value = 440 * Math.pow(2, semitones / 12);
-
-      gain.gain.setValueAtTime(0.0001, t + i * 0.05);
-      gain.gain.linearRampToValueAtTime(0.025, t + i * 0.05 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.05 + 0.28);
-
-      osc.connect(gain);
-      gain.connect(audioCtx.destination);
-      osc.start(t + i * 0.05);
-      osc.stop(t + i * 0.05 + 0.32);
-    });
+  function hexToRGBA(hex, alpha) {
+    const h = hex.replace("#", "");
+    const bigint = parseInt(h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
   }
 
   // =========================================================
@@ -404,8 +373,6 @@
   }
 
   async function populateCameraList() {
-    if (!cameraSelect) return;
-
     const cameras = await getCameras();
     cameraSelect.innerHTML = "";
 
@@ -451,126 +418,7 @@
   }
 
   // =========================================================
-  // LOGO
-  // =========================================================
-  function renderLogoLayer() {
-    logoCtx.clearRect(0, 0, W, H);
-
-    logoCtx.fillStyle = "#f8fbff";
-    logoCtx.fillRect(0, 0, W, H);
-
-    const gradA = logoCtx.createRadialGradient(W * 0.35, H * 0.4, 0, W * 0.35, H * 0.4, W * 0.45);
-    gradA.addColorStop(0, "rgba(31,165,220,0.10)");
-    gradA.addColorStop(1, "rgba(31,165,220,0)");
-    logoCtx.fillStyle = gradA;
-    logoCtx.fillRect(0, 0, W, H);
-
-    const gradB = logoCtx.createRadialGradient(W * 0.68, H * 0.42, 0, W * 0.68, H * 0.42, W * 0.42);
-    gradB.addColorStop(0, "rgba(161,44,146,0.08)");
-    gradB.addColorStop(1, "rgba(161,44,146,0)");
-    logoCtx.fillStyle = gradB;
-    logoCtx.fillRect(0, 0, W, H);
-
-    if (!logoReady) {
-      logoCtx.fillStyle = "#0f2a44";
-      logoCtx.font = "bold 84px Arial";
-      logoCtx.textAlign = "center";
-      logoCtx.fillText("BxCM", W / 2, H / 2);
-      return;
-    }
-
-    const maxW = W * 0.68;
-    const maxH = H * 0.38;
-    const scale = Math.min(maxW / logoImg.width, maxH / logoImg.height);
-    const drawW = logoImg.width * scale;
-    const drawH = logoImg.height * scale;
-    const x = (W - drawW) / 2;
-    const y = (H - drawH) / 2;
-
-    logoCtx.save();
-    logoCtx.shadowBlur = 28;
-    logoCtx.shadowColor = "rgba(31,165,220,0.15)";
-    logoCtx.drawImage(logoImg, x, y, drawW, drawH);
-    logoCtx.restore();
-
-    logoCtx.drawImage(logoImg, x, y, drawW, drawH);
-  }
-
-  // =========================================================
-  // FOG
-  // =========================================================
-  function buildFog(fullReset = false) {
-    if (fullReset) {
-      fogCtx.clearRect(0, 0, W, H);
-      fogCtx.fillStyle = "rgba(255,255,255,0.995)";
-      fogCtx.fillRect(0, 0, W, H);
-    }
-
-    for (let i = 0; i < CONFIG.fogTextureDensity; i++) {
-      const x = rand(0, W);
-      const y = rand(0, H);
-      const r = rand(CONFIG.fogTextureSizeMin, CONFIG.fogTextureSizeMax);
-
-      const g = fogCtx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, "rgba(255,255,255,0.22)");
-      g.addColorStop(0.55, "rgba(246,249,255,0.10)");
-      g.addColorStop(1, "rgba(255,255,255,0)");
-
-      fogCtx.fillStyle = g;
-      fogCtx.beginPath();
-      fogCtx.arc(x, y, r, 0, Math.PI * 2);
-      fogCtx.fill();
-    }
-  }
-
-  // =========================================================
-  // SOFT BLOOMS (replaces particles)
-  // =========================================================
-  const blooms = [];
-
-  function spawnBloom(x, y, strength = 1) {
-    if (blooms.length > CONFIG.bloomMax) return;
-
-    blooms.push({
-      x,
-      y,
-      r: rand(16, 44) * strength,
-      life: rand(CONFIG.bloomLifeMin, CONFIG.bloomLifeMax),
-      maxLife: 0,
-      color: pick(BXCM_COLORS)
-    });
-
-    blooms[blooms.length - 1].maxLife = blooms[blooms.length - 1].life;
-  }
-
-  function updateAndDrawBlooms() {
-    for (let i = blooms.length - 1; i >= 0; i--) {
-      const b = blooms[i];
-      b.life -= 1;
-      b.r *= 1.01;
-
-      if (b.life <= 0) {
-        blooms.splice(i, 1);
-        continue;
-      }
-
-      const alpha = (b.life / b.maxLife) * 0.22;
-      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
-      g.addColorStop(0, hexToRGBA(b.color, alpha));
-      g.addColorStop(1, "rgba(255,255,255,0)");
-
-      ctx.save();
-      ctx.globalCompositeOperation = "multiply";
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-  }
-
-  // =========================================================
-  // MODE FEEL
+  // MODES
   // =========================================================
   function resolveAutoMode() {
     const e = state.motionEnergy;
@@ -595,37 +443,220 @@
 
     if (mode === "STORM") {
       return {
-        eraseBoost: 1.28,
-        returnAlpha: CONFIG.fogReturnAlphaBase * 0.95,
-        mirror: false,
-        bloomBoost: 1.15
+        eraseBoost: 1.22,
+        returnAlphaBoost: 1.0,
+        mirror: false
       };
     }
 
     if (mode === "TWIN") {
       return {
         eraseBoost: 1.0,
-        returnAlpha: CONFIG.fogReturnAlphaBase * 1.0,
-        mirror: true,
-        bloomBoost: 1.0
+        returnAlphaBoost: 1.0,
+        mirror: true
       };
     }
 
     if (mode === "SPACE") {
       return {
-        eraseBoost: 0.85,
-        returnAlpha: CONFIG.fogReturnAlphaBase * 0.72,
-        mirror: false,
-        bloomBoost: 0.8
+        eraseBoost: 0.82,
+        returnAlphaBoost: 0.72,
+        mirror: false
       };
     }
 
     return {
       eraseBoost: 0.95,
-      returnAlpha: CONFIG.fogReturnAlphaBase,
-      mirror: false,
-      bloomBoost: 0.9
+      returnAlphaBoost: 1.0,
+      mirror: false
     };
+  }
+
+  // =========================================================
+  // HIDDEN LAYER
+  // =========================================================
+  function drawCenteredAsset(drawFn, assetW, assetH) {
+    const maxW = W * 0.72;
+    const maxH = H * 0.44;
+    const scale = Math.min(maxW / assetW, maxH / assetH);
+    const drawW = assetW * scale;
+    const drawH = assetH * scale;
+    const x = (W - drawW) / 2;
+    const y = (H - drawH) / 2;
+    drawFn(x, y, drawW, drawH);
+  }
+
+  function renderHiddenLayer() {
+    hiddenCtx.clearRect(0, 0, W, H);
+
+    hiddenCtx.fillStyle = "#f8fbff";
+    hiddenCtx.fillRect(0, 0, W, H);
+
+    const gradA = hiddenCtx.createRadialGradient(W * 0.35, H * 0.4, 0, W * 0.35, H * 0.4, W * 0.45);
+    gradA.addColorStop(0, "rgba(31,165,220,0.10)");
+    gradA.addColorStop(1, "rgba(31,165,220,0)");
+    hiddenCtx.fillStyle = gradA;
+    hiddenCtx.fillRect(0, 0, W, H);
+
+    const gradB = hiddenCtx.createRadialGradient(W * 0.68, H * 0.42, 0, W * 0.68, H * 0.42, W * 0.42);
+    gradB.addColorStop(0, "rgba(161,44,146,0.08)");
+    gradB.addColorStop(1, "rgba(161,44,146,0)");
+    hiddenCtx.fillStyle = gradB;
+    hiddenCtx.fillRect(0, 0, W, H);
+
+    if (state.revealType === "logo") {
+      if (logoReady) {
+        hiddenCtx.save();
+        hiddenCtx.shadowBlur = 28;
+        hiddenCtx.shadowColor = "rgba(31,165,220,0.15)";
+        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h), logoImg.width, logoImg.height);
+        hiddenCtx.restore();
+        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h), logoImg.width, logoImg.height);
+      } else {
+        hiddenCtx.fillStyle = "#0f2a44";
+        hiddenCtx.font = "bold 84px Arial";
+        hiddenCtx.textAlign = "center";
+        hiddenCtx.fillText("BxCM", W / 2, H / 2);
+      }
+      return;
+    }
+
+    if (state.revealType === "image") {
+      if (revealImgReady) {
+        hiddenCtx.save();
+        hiddenCtx.shadowBlur = 24;
+        hiddenCtx.shadowColor = "rgba(31,165,220,0.12)";
+        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(revealImg, x, y, w, h), revealImg.width, revealImg.height);
+        hiddenCtx.restore();
+      } else {
+        hiddenCtx.fillStyle = "#0f2a44";
+        hiddenCtx.font = "bold 54px Arial";
+        hiddenCtx.textAlign = "center";
+        hiddenCtx.fillText("Add reveal-image.jpg", W / 2, H / 2);
+      }
+      return;
+    }
+
+    if (state.revealType === "video") {
+      if (revealVideo.readyState >= 2) {
+        const vw = revealVideo.videoWidth || 1920;
+        const vh = revealVideo.videoHeight || 1080;
+        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(revealVideo, x, y, w, h), vw, vh);
+      } else {
+        hiddenCtx.fillStyle = "#0f2a44";
+        hiddenCtx.font = "bold 54px Arial";
+        hiddenCtx.textAlign = "center";
+        hiddenCtx.fillText("Add reveal-video.mp4", W / 2, H / 2);
+      }
+    }
+  }
+
+  // =========================================================
+  // FOG BUILD
+  // =========================================================
+  function buildFog(fullReset = false) {
+    if (fullReset) {
+      fogCtx.clearRect(0, 0, W, H);
+
+      if (state.fogStyle === "frosted") {
+        fogCtx.fillStyle = "rgba(255,255,255,0.985)";
+      } else if (state.fogStyle === "dust") {
+        fogCtx.fillStyle = "rgba(252,250,246,0.995)";
+      } else {
+        fogCtx.fillStyle = "rgba(255,255,255,0.995)";
+      }
+
+      fogCtx.fillRect(0, 0, W, H);
+    }
+
+    if (state.fogStyle === "smoke") {
+      for (let i = 0; i < 34; i++) {
+        const x = rand(0, W);
+        const y = rand(0, H);
+        const r = rand(70, 220);
+        const g = fogCtx.createRadialGradient(x, y, 0, x, y, r);
+        g.addColorStop(0, "rgba(255,255,255,0.22)");
+        g.addColorStop(0.55, "rgba(246,249,255,0.10)");
+        g.addColorStop(1, "rgba(255,255,255,0)");
+        fogCtx.fillStyle = g;
+        fogCtx.beginPath();
+        fogCtx.arc(x, y, r, 0, Math.PI * 2);
+        fogCtx.fill();
+      }
+      return;
+    }
+
+    if (state.fogStyle === "dust") {
+      for (let i = 0; i < 2600; i++) {
+        const x = rand(0, W);
+        const y = rand(0, H);
+        const s = rand(0.5, 2.2);
+        fogCtx.fillStyle = `rgba(210, 200, 185, ${rand(0.02, 0.08)})`;
+        fogCtx.beginPath();
+        fogCtx.arc(x, y, s, 0, Math.PI * 2);
+        fogCtx.fill();
+      }
+      return;
+    }
+
+    if (state.fogStyle === "frosted") {
+      for (let i = 0; i < 90; i++) {
+        const x = rand(0, W);
+        const y = rand(0, H);
+        const w = rand(80, 180);
+        const h = rand(18, 44);
+        fogCtx.save();
+        fogCtx.translate(x, y);
+        fogCtx.rotate(rand(-0.8, 0.8));
+        fogCtx.fillStyle = `rgba(255,255,255,${rand(0.04, 0.09)})`;
+        fogCtx.fillRect(-w / 2, -h / 2, w, h);
+        fogCtx.restore();
+      }
+    }
+  }
+
+  // =========================================================
+  // SOFT WIPE BLOOMS
+  // =========================================================
+  const blooms = [];
+
+  function spawnBloom(x, y, strength = 1) {
+    if (blooms.length > 120) return;
+    blooms.push({
+      x,
+      y,
+      r: rand(14, 40) * strength,
+      life: rand(18, 40),
+      maxLife: 0,
+      color: pick(BXCM_COLORS)
+    });
+    blooms[blooms.length - 1].maxLife = blooms[blooms.length - 1].life;
+  }
+
+  function updateAndDrawBlooms() {
+    for (let i = blooms.length - 1; i >= 0; i--) {
+      const b = blooms[i];
+      b.life -= 1;
+      b.r *= 1.01;
+
+      if (b.life <= 0) {
+        blooms.splice(i, 1);
+        continue;
+      }
+
+      const alpha = (b.life / b.maxLife) * 0.20;
+      const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, b.r);
+      g.addColorStop(0, hexToRGBA(b.color, alpha));
+      g.addColorStop(1, "rgba(255,255,255,0)");
+
+      ctx.save();
+      ctx.globalCompositeOperation = "multiply";
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   // =========================================================
@@ -652,9 +683,17 @@
     let active = 0;
     let energyAccum = 0;
 
+    const returnAlpha = CONFIG.fogReturnAlphaBase * params.returnAlphaBoost;
+
     fogCtx.save();
     fogCtx.globalCompositeOperation = "source-over";
-    fogCtx.fillStyle = `rgba(255,255,255,${params.returnAlpha})`;
+
+    if (state.fogStyle === "dust") {
+      fogCtx.fillStyle = `rgba(252,250,246,${returnAlpha})`;
+    } else {
+      fogCtx.fillStyle = `rgba(255,255,255,${returnAlpha})`;
+    }
+
     fogCtx.fillRect(0, 0, W, H);
     fogCtx.restore();
 
@@ -687,7 +726,6 @@
 
           const eraseAlpha = lerp(CONFIG.eraseStrengthBase, CONFIG.eraseStrengthMax, strength);
 
-          // main wipe
           fogCtx.save();
           fogCtx.globalCompositeOperation = "destination-out";
           fogCtx.beginPath();
@@ -696,27 +734,34 @@
           fogCtx.fill();
           fogCtx.restore();
 
-          // soft colored edge wash
-          fogCtx.save();
-          fogCtx.globalCompositeOperation = "source-over";
-          const glow = fogCtx.createRadialGradient(screenX, screenY, 0, screenX, screenY, radius * 1.7);
-          glow.addColorStop(0, hexToRGBA(pick(BXCM_COLORS), 0.035));
-          glow.addColorStop(1, "rgba(255,255,255,0)");
-          fogCtx.fillStyle = glow;
-          fogCtx.beginPath();
-          fogCtx.arc(screenX, screenY, radius * 1.7, 0, Math.PI * 2);
-          fogCtx.fill();
-          fogCtx.restore();
-
-          // occasional soft bloom, not cheesy sparkles
-          if (Math.random() < 0.08) {
-            spawnBloom(screenX, screenY, strength * params.bloomBoost);
+          // edge treatment based on fog style
+          if (state.fogStyle === "smoke") {
+            fogCtx.save();
+            fogCtx.globalCompositeOperation = "source-over";
+            const glow = fogCtx.createRadialGradient(screenX, screenY, 0, screenX, screenY, radius * 1.8);
+            glow.addColorStop(0, hexToRGBA(pick(BXCM_COLORS), 0.028));
+            glow.addColorStop(1, "rgba(255,255,255,0)");
+            fogCtx.fillStyle = glow;
+            fogCtx.beginPath();
+            fogCtx.arc(screenX, screenY, radius * 1.8, 0, Math.PI * 2);
+            fogCtx.fill();
+            fogCtx.restore();
+          } else if (state.fogStyle === "dust") {
+            if (Math.random() < 0.18) {
+              spawnBloom(screenX, screenY, strength * 0.9);
+            }
+          } else if (state.fogStyle === "frosted") {
+            fogCtx.save();
+            fogCtx.globalCompositeOperation = "destination-out";
+            fogCtx.beginPath();
+            fogCtx.arc(screenX, screenY, radius * 0.55, 0, Math.PI * 2);
+            fogCtx.fillStyle = `rgba(0,0,0,${eraseAlpha * 0.35})`;
+            fogCtx.fill();
+            fogCtx.restore();
           }
 
-          // Twin mode mirror
           if (params.mirror) {
             const mx = W - screenX;
-
             fogCtx.save();
             fogCtx.globalCompositeOperation = "destination-out";
             fogCtx.beginPath();
@@ -759,6 +804,13 @@
     state.revealRatio = visibleCount / total;
   }
 
+  function maybeCelebrate() {
+    if (state.revealRatio > 0.80 && !celebrationOn) {
+      celebrationOn = true;
+      lastCelebrationAt = performance.now();
+    }
+  }
+
   // =========================================================
   // DRAW
   // =========================================================
@@ -767,8 +819,13 @@
     ctx.fillRect(0, 0, W, H);
   }
 
-  function drawLogo() {
-    ctx.drawImage(logoCanvas, 0, 0);
+  function drawHiddenLayer() {
+    // keep video fresh if needed
+    if (state.revealType === "video" && revealVideo.readyState >= 2) {
+      renderHiddenLayer();
+    }
+
+    ctx.drawImage(hiddenCanvas, 0, 0);
 
     const reveal = state.revealRatio;
     if (reveal > 0.18) {
@@ -806,20 +863,8 @@
     ctx.textAlign = "center";
     ctx.font = "bold 44px Arial";
     ctx.fillStyle = "#0f2a44";
-    ctx.fillText("You revealed BxCM!", W / 2, H * 0.16);
+    ctx.fillText("Revealed!", W / 2, H * 0.16);
     ctx.restore();
-  }
-
-  function maybeCelebrate() {
-    if (state.revealRatio > 0.80 && !celebrationOn) {
-      celebrationOn = true;
-      lastCelebrationAt = performance.now();
-      playCelebrateSound();
-
-      for (let i = 0; i < 26; i++) {
-        spawnBloom(rand(W * 0.25, W * 0.75), rand(H * 0.25, H * 0.7), rand(0.8, 1.6));
-      }
-    }
   }
 
   function drawDebugHUD() {
@@ -830,8 +875,10 @@
     ctx.font = "14px Arial";
     ctx.fillText(`Motion Energy: ${state.motionEnergy.toFixed(2)}`, 20, 68);
     ctx.fillText(`Reveal: ${(state.revealRatio * 100).toFixed(1)}%`, 20, 88);
-    ctx.fillText(`Mode: ${state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode}`, 20, 108);
-    ctx.fillText(`Sound: ${state.soundEnabled ? "On" : "Off"}`, 20, 128);
+    ctx.fillText(`Reveal Type: ${state.revealType}`, 20, 108);
+    ctx.fillText(`Fog Style: ${state.fogStyle}`, 20, 128);
+    ctx.fillText(`Mode: ${state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode}`, 20, 148);
+    ctx.fillText(`Sound: ${state.soundEnabled ? "On" : "Off"}`, 20, 168);
     ctx.restore();
   }
 
@@ -854,7 +901,7 @@
     updateAudio();
 
     drawBackground();
-    drawLogo();
+    drawHiddenLayer();
     updateAndDrawBlooms();
     drawFog();
     drawCelebration();
@@ -871,39 +918,39 @@
   async function startExperience() {
     if (started) return;
 
-    if (startBtn) {
-      startBtn.disabled = true;
-      startBtn.textContent = "Starting...";
-    }
+    startBtn.disabled = true;
+    startBtn.textContent = "Starting...";
 
     try {
       await resumeAudio();
-      await startCamera(selectedDeviceId || (cameraSelect ? cameraSelect.value : undefined));
+      await startCamera(selectedDeviceId || cameraSelect.value);
+
+      try {
+        await revealVideo.play();
+      } catch (_) {
+        // ignore autoplay block
+      }
 
       buildFog(true);
-      renderLogoLayer();
+      renderHiddenLayer();
 
       started = true;
       experienceStartedAt = performance.now();
       scheduleUIHide();
       animationId = requestAnimationFrame(animate);
 
-      if (startBtn) {
-        startBtn.textContent = "Running";
-      }
+      startBtn.textContent = "Running";
     } catch (err) {
       console.error(err);
-      if (startBtn) {
-        startBtn.disabled = false;
-        startBtn.textContent = "Start";
-      }
+      startBtn.disabled = false;
+      startBtn.textContent = "Start";
       alert("Could not start the camera. Check permissions and reload.");
     }
   }
 
   function resetExperience() {
     buildFog(true);
-    renderLogoLayer();
+    renderHiddenLayer();
     blooms.length = 0;
     state.revealRatio = 0;
     state.motionEnergy = 0;
@@ -913,75 +960,65 @@
   // =========================================================
   // EVENTS
   // =========================================================
-  if (startBtn) {
-    startBtn.addEventListener("click", async () => {
-      firstGestureActivated = true;
-      await resumeAudio();
-      await startExperience();
-    });
-  }
+  startBtn.addEventListener("click", async () => {
+    firstGestureActivated = true;
+    await resumeAudio();
+    await startExperience();
+  });
 
-  if (burstBtn) {
-    burstBtn.addEventListener("click", () => {
-      const radius = 70;
-      fogCtx.save();
-      fogCtx.globalCompositeOperation = "destination-out";
-      fogCtx.beginPath();
-      fogCtx.arc(W / 2, H / 2, radius, 0, Math.PI * 2);
-      fogCtx.fillStyle = "rgba(0,0,0,0.18)";
-      fogCtx.fill();
-      fogCtx.restore();
+  resetBtn.addEventListener("click", () => {
+    resetExperience();
+    scheduleUIHide();
+  });
 
-      for (let i = 0; i < 8; i++) {
-        spawnBloom(W / 2 + rand(-40, 40), H / 2 + rand(-20, 20), 1);
+  soundBtn.addEventListener("click", async () => {
+    await resumeAudio();
+    state.soundEnabled = !state.soundEnabled;
+    updateSoundButton();
+    scheduleUIHide();
+  });
+
+  debugBtn.addEventListener("click", () => {
+    debugOn = !debugOn;
+    video.style.opacity = debugOn ? "0.18" : "0";
+    debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
+  });
+
+  cameraSelect.addEventListener("change", async () => {
+    selectedDeviceId = cameraSelect.value;
+    if (started) {
+      try {
+        await startCamera(selectedDeviceId);
+      } catch (err) {
+        console.error(err);
       }
-    });
-  }
+    }
+  });
 
-  if (resetBtn) {
-    resetBtn.addEventListener("click", () => {
-      resetExperience();
-      scheduleUIHide();
-    });
-  }
+  revealTypeSelect.addEventListener("change", async () => {
+    state.revealType = revealTypeSelect.value;
+    renderHiddenLayer();
 
-  if (soundBtn) {
-    soundBtn.addEventListener("click", async () => {
-      await resumeAudio();
-      state.soundEnabled = !state.soundEnabled;
-      updateSoundButton();
-      scheduleUIHide();
-    });
-  }
+    if (state.revealType === "video") {
+      try {
+        await revealVideo.play();
+      } catch (_) {}
+    }
 
-  if (debugBtn) {
-    debugBtn.addEventListener("click", () => {
-      debugOn = !debugOn;
-      video.style.opacity = debugOn ? "0.18" : "0";
-      if (debugBtn) debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
-    });
-  }
+    scheduleUIHide();
+  });
 
-  if (cameraSelect) {
-    cameraSelect.addEventListener("change", async () => {
-      selectedDeviceId = cameraSelect.value;
-      if (started) {
-        try {
-          await startCamera(selectedDeviceId);
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    });
-  }
+  fogStyleSelect.addEventListener("change", () => {
+    state.fogStyle = fogStyleSelect.value;
+    buildFog(true);
+    scheduleUIHide();
+  });
 
-  if (modeSelect) {
-    modeSelect.addEventListener("change", () => {
-      state.mode = modeSelect.value;
-      updateModeBadge();
-      scheduleUIHide();
-    });
-  }
+  modeSelect.addEventListener("change", () => {
+    state.mode = modeSelect.value;
+    updateModeBadge();
+    scheduleUIHide();
+  });
 
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", async () => {
@@ -1007,7 +1044,7 @@
     if (key === "d") {
       debugOn = !debugOn;
       video.style.opacity = debugOn ? "0.18" : "0";
-      if (debugBtn) debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
+      debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
     }
   });
 
@@ -1038,13 +1075,16 @@
       console.error("Could not populate cameras:", err);
     }
 
-    if (modeSelect) {
-      modeSelect.value = "AUTO";
-      state.mode = "AUTO";
-      updateModeBadge();
-    }
-
+    state.revealType = "logo";
+    state.fogStyle = "smoke";
+    state.mode = "AUTO";
     state.soundEnabled = false;
+
+    revealTypeSelect.value = state.revealType;
+    fogStyleSelect.value = state.fogStyle;
+    modeSelect.value = state.mode;
+
+    updateModeBadge();
     updateSoundButton();
 
     try {
