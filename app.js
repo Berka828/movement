@@ -475,81 +475,118 @@
   // =========================================================
   // HIDDEN LAYER
   // =========================================================
-  function drawCenteredAsset(drawFn, assetW, assetH) {
-    const maxW = W * 0.72;
-    const maxH = H * 0.44;
-    const scale = Math.min(maxW / assetW, maxH / assetH);
-    const drawW = assetW * scale;
-    const drawH = assetH * scale;
-    const x = (W - drawW) / 2;
-    const y = (H - drawH) / 2;
-    drawFn(x, y, drawW, drawH);
-  }
+  function drawContainedAsset(drawFn, assetW, assetH, maxWidthRatio = 0.72, maxHeightRatio = 0.44) {
+  const maxW = W * maxWidthRatio;
+  const maxH = H * maxHeightRatio;
+  const scale = Math.min(maxW / assetW, maxH / assetH);
+  const drawW = assetW * scale;
+  const drawH = assetH * scale;
+  const x = (W - drawW) / 2;
+  const y = (H - drawH) / 2;
+  drawFn(x, y, drawW, drawH);
+}
+
+function drawCoveredAsset(drawFn, assetW, assetH, coverWidthRatio = 1.0, coverHeightRatio = 1.0) {
+  const targetW = W * coverWidthRatio;
+  const targetH = H * coverHeightRatio;
+  const scale = Math.max(targetW / assetW, targetH / assetH);
+  const drawW = assetW * scale;
+  const drawH = assetH * scale;
+  const x = (W - drawW) / 2;
+  const y = (H - drawH) / 2;
+  drawFn(x, y, drawW, drawH);
+}
 
   function renderHiddenLayer() {
-    hiddenCtx.clearRect(0, 0, W, H);
+  hiddenCtx.clearRect(0, 0, W, H);
 
-    hiddenCtx.fillStyle = "#f8fbff";
-    hiddenCtx.fillRect(0, 0, W, H);
+  hiddenCtx.fillStyle = "#f8fbff";
+  hiddenCtx.fillRect(0, 0, W, H);
 
-    const gradA = hiddenCtx.createRadialGradient(W * 0.35, H * 0.4, 0, W * 0.35, H * 0.4, W * 0.45);
-    gradA.addColorStop(0, "rgba(31,165,220,0.10)");
-    gradA.addColorStop(1, "rgba(31,165,220,0)");
-    hiddenCtx.fillStyle = gradA;
-    hiddenCtx.fillRect(0, 0, W, H);
+  const gradA = hiddenCtx.createRadialGradient(W * 0.35, H * 0.4, 0, W * 0.35, H * 0.4, W * 0.45);
+  gradA.addColorStop(0, "rgba(31,165,220,0.10)");
+  gradA.addColorStop(1, "rgba(31,165,220,0)");
+  hiddenCtx.fillStyle = gradA;
+  hiddenCtx.fillRect(0, 0, W, H);
 
-    const gradB = hiddenCtx.createRadialGradient(W * 0.68, H * 0.42, 0, W * 0.68, H * 0.42, W * 0.42);
-    gradB.addColorStop(0, "rgba(161,44,146,0.08)");
-    gradB.addColorStop(1, "rgba(161,44,146,0)");
-    hiddenCtx.fillStyle = gradB;
-    hiddenCtx.fillRect(0, 0, W, H);
+  const gradB = hiddenCtx.createRadialGradient(W * 0.68, H * 0.42, 0, W * 0.68, H * 0.42, W * 0.42);
+  gradB.addColorStop(0, "rgba(161,44,146,0.08)");
+  gradB.addColorStop(1, "rgba(161,44,146,0)");
+  hiddenCtx.fillStyle = gradB;
+  hiddenCtx.fillRect(0, 0, W, H);
 
-    if (state.revealType === "logo") {
-      if (logoReady) {
-        hiddenCtx.save();
-        hiddenCtx.shadowBlur = 28;
-        hiddenCtx.shadowColor = "rgba(31,165,220,0.15)";
-        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h), logoImg.width, logoImg.height);
-        hiddenCtx.restore();
-        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h), logoImg.width, logoImg.height);
-      } else {
-        hiddenCtx.fillStyle = "#0f2a44";
-        hiddenCtx.font = "bold 84px Arial";
-        hiddenCtx.textAlign = "center";
-        hiddenCtx.fillText("BxCM", W / 2, H / 2);
-      }
-      return;
+  if (state.revealType === "logo") {
+    if (logoReady) {
+      hiddenCtx.save();
+      hiddenCtx.shadowBlur = 28;
+      hiddenCtx.shadowColor = "rgba(31,165,220,0.15)";
+      drawContainedAsset(
+        (x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h),
+        logoImg.width,
+        logoImg.height,
+        0.72,
+        0.44
+      );
+      hiddenCtx.restore();
+
+      drawContainedAsset(
+        (x, y, w, h) => hiddenCtx.drawImage(logoImg, x, y, w, h),
+        logoImg.width,
+        logoImg.height,
+        0.72,
+        0.44
+      );
+    } else {
+      hiddenCtx.fillStyle = "#0f2a44";
+      hiddenCtx.font = "bold 84px Arial";
+      hiddenCtx.textAlign = "center";
+      hiddenCtx.fillText("BxCM", W / 2, H / 2);
     }
+    return;
+  }
 
-    if (state.revealType === "image") {
-      if (revealImgReady) {
-        hiddenCtx.save();
-        hiddenCtx.shadowBlur = 24;
-        hiddenCtx.shadowColor = "rgba(31,165,220,0.12)";
-        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(revealImg, x, y, w, h), revealImg.width, revealImg.height);
-        hiddenCtx.restore();
-      } else {
-        hiddenCtx.fillStyle = "#0f2a44";
-        hiddenCtx.font = "bold 54px Arial";
-        hiddenCtx.textAlign = "center";
-        hiddenCtx.fillText("Add reveal-image.jpg", W / 2, H / 2);
-      }
-      return;
+  if (state.revealType === "image") {
+    if (revealImgReady) {
+      hiddenCtx.save();
+      hiddenCtx.shadowBlur = 24;
+      hiddenCtx.shadowColor = "rgba(31,165,220,0.12)";
+      drawCoveredAsset(
+        (x, y, w, h) => hiddenCtx.drawImage(revealImg, x, y, w, h),
+        revealImg.width,
+        revealImg.height,
+        0.92,
+        0.82
+      );
+      hiddenCtx.restore();
+    } else {
+      hiddenCtx.fillStyle = "#0f2a44";
+      hiddenCtx.font = "bold 54px Arial";
+      hiddenCtx.textAlign = "center";
+      hiddenCtx.fillText("Add reveal-image.jpg", W / 2, H / 2);
     }
+    return;
+  }
 
-    if (state.revealType === "video") {
-      if (revealVideo.readyState >= 2) {
-        const vw = revealVideo.videoWidth || 1920;
-        const vh = revealVideo.videoHeight || 1080;
-        drawCenteredAsset((x, y, w, h) => hiddenCtx.drawImage(revealVideo, x, y, w, h), vw, vh);
-      } else {
-        hiddenCtx.fillStyle = "#0f2a44";
-        hiddenCtx.font = "bold 54px Arial";
-        hiddenCtx.textAlign = "center";
-        hiddenCtx.fillText("Add reveal-video.mp4", W / 2, H / 2);
-      }
+  if (state.revealType === "video") {
+    if (revealVideo.readyState >= 2) {
+      const vw = revealVideo.videoWidth || 1920;
+      const vh = revealVideo.videoHeight || 1080;
+
+      drawCoveredAsset(
+        (x, y, w, h) => hiddenCtx.drawImage(revealVideo, x, y, w, h),
+        vw,
+        vh,
+        1.0,
+        0.9
+      );
+    } else {
+      hiddenCtx.fillStyle = "#0f2a44";
+      hiddenCtx.font = "bold 54px Arial";
+      hiddenCtx.textAlign = "center";
+      hiddenCtx.fillText("Add reveal-video.mp4", W / 2, H / 2);
     }
   }
+}
 
   // =========================================================
   // FOG BUILD
