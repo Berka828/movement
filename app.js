@@ -159,14 +159,16 @@
   const instructionOverlay = document.createElement("div");
   instructionOverlay.id = "instructionOverlay";
   instructionOverlay.innerHTML = `
-    <div id="instructionInner">
-      <div class="line big">STEP IN</div>
-      <div class="line">MOVE YOUR RIGHT HAND TO STEER</div>
-      <div class="line">RAISE YOUR LEFT HAND TO ADD ENERGY</div>
-      <div class="line">HANDS WIDE = MIRROR MODE</div>
-      <div class="line">PUSH FAST FOR A BURST</div>
-    </div>
-  `;
+  <div id="instructionInner">
+    <div class="line museum">BRONX CHILDREN’S MUSEUM</div>
+    <div class="line big">MOVE THE ENERGY</div>
+    <div class="line">Use your body to explore light, motion, color, and sound.</div>
+    <div class="line">Move one hand to guide the flow.</div>
+    <div class="line">Lift your hands to brighten the energy.</div>
+    <div class="line">Stretch wide to discover new modes.</div>
+    <div class="line">Fast movement creates bigger reactions.</div>
+  </div>
+`;
   document.body.appendChild(instructionOverlay);
 
   Object.assign(instructionOverlay.style, {
@@ -192,35 +194,60 @@
     padding: "24px"
   });
 
-  Array.from(instructionInner.querySelectorAll(".line")).forEach((line, index) => {
-    Object.assign(line.style, {
-      margin: index === 0 ? "0 0 18px 0" : "10px 0",
-      fontSize: index === 0 ? "42px" : "22px",
-      fontWeight: index === 0 ? "700" : "500"
-    });
+ Array.from(instructionInner.querySelectorAll(".line")).forEach((line, index) => {
+  let fontSize = "22px";
+  let fontWeight = "500";
+  let color = "#ffffff";
+  let margin = "10px 0";
+
+  if (line.classList.contains("museum")) {
+    fontSize = "16px";
+    fontWeight = "700";
+    color = "#8fe9ff";
+    margin = "0 0 10px 0";
+    line.style.letterSpacing = "2px";
+  }
+
+  if (line.classList.contains("big")) {
+    fontSize = "76px";
+    fontWeight = "800";
+    color = "#ffffff";
+    margin = "0 0 18px 0";
+    line.style.lineHeight = "0.95";
+    line.style.textShadow = "0 0 24px rgba(0,184,255,0.22), 0 0 30px rgba(255,0,140,0.12)";
+  }
+
+  Object.assign(line.style, {
+    margin,
+    fontSize,
+    fontWeight,
+    color
   });
+});
 
   const modeBadge = document.createElement("div");
   modeBadge.id = "modeBadge";
   modeBadge.textContent = "MODE: CALM";
   document.body.appendChild(modeBadge);
 
-  Object.assign(modeBadge.style, {
-    position: "fixed",
-    left: "20px",
-    top: "20px",
-    zIndex: "25",
-    color: "white",
-    fontFamily: "Arial, sans-serif",
-    fontSize: "16px",
-    letterSpacing: "1px",
-    padding: "10px 14px",
-    borderRadius: "999px",
-    background: "rgba(0,0,0,0.35)",
-    backdropFilter: "blur(4px)",
-    opacity: "0.95",
-    transition: "opacity 0.5s ease"
-  });
+Object.assign(modeBadge.style, {
+  position: "fixed",
+  left: "20px",
+  top: "20px",
+  zIndex: "25",
+  color: "#ffffff",
+  fontFamily: "Arial, sans-serif",
+  fontSize: "15px",
+  letterSpacing: "1px",
+  padding: "10px 16px",
+  borderRadius: "999px",
+  background: "linear-gradient(180deg, rgba(0,184,255,0.24), rgba(255,0,140,0.16))",
+  border: "1px solid rgba(255,255,255,0.12)",
+  backdropFilter: "blur(6px)",
+  boxShadow: "0 0 20px rgba(0,184,255,0.12)",
+  opacity: "0.95",
+  transition: "opacity 0.5s ease"
+});
 
   // =========================================================
   // VIDEO STYLE
