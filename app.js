@@ -50,7 +50,19 @@
     bigGestureThreshold: 150,
     kioskHideDelayMs: 5000,
     instructionFadeAfterMs: 9000,
-    instructionPulseSpeed: 0.002
+    instructionPulseSpeed: 0.002,
+
+    // crowd silhouette settings
+    silhouetteWidth: 320,
+    silhouetteHeight: 240,
+    silhouetteThreshold: 34,
+    silhouetteStep: 4,
+    silhouetteAlpha: 0.22,
+    silhouetteBlur: 10,
+    silhouetteTintA: "0,184,255",   // cyan
+    silhouetteTintB: "255,0,140",   // magenta
+    silhouetteGlowAlpha: 0.16,
+    silhouetteUpdateEvery: 1
   };
 
   // =========================================================
@@ -73,6 +85,7 @@
   let uiHideTimeout = null;
   let experienceStartedAt = 0;
   let firstGestureActivated = false;
+  let frameCount = 0;
 
   const state = {
     targetX: W * 0.5,
@@ -105,10 +118,23 @@
     lastPoseSeenAt: 0
   };
 
-  // motion fallback
-  let prevFrame = null;
+  // =========================================================
+  // OFFSCREEN CANVASES
+  // =========================================================
   const motionCanvas = document.createElement("canvas");
   const motionCtx = motionCanvas.getContext("2d", { willReadFrequently: true });
+  let prevMotionFrame = null;
+
+  const silhouetteCanvas = document.createElement("canvas");
+  const silhouetteCtx = silhouetteCanvas.getContext("2d", { willReadFrequently: true });
+
+  const silhouetteMaskCanvas = document.createElement("canvas");
+  const silhouetteMaskCtx = silhouetteMaskCanvas.getContext("2d", { willReadFrequently: true });
+
+  const silhouetteLargeCanvas = document.createElement("canvas");
+  const silhouetteLargeCtx = silhouetteLargeCanvas.getContext("2d");
+
+  let prevSilhouetteFrame = null;
 
   // =========================================================
   // UTILS
@@ -149,6 +175,15 @@
 
     motionCanvas.width = 320;
     motionCanvas.height = 240;
+
+    silhouetteCanvas.width = CONFIG.silhouetteWidth;
+    silhouetteCanvas.height = CONFIG.silhouetteHeight;
+
+    silhouetteMaskCanvas.width = CONFIG.silhouetteWidth;
+    silhouetteMaskCanvas.height = CONFIG.silhouetteHeight;
+
+    silhouetteLargeCanvas.width = W;
+    silhouetteLargeCanvas.height = H;
   }
 
   window.addEventListener("resize", resize);
@@ -167,7 +202,7 @@
       <div class="line">Guide the flow with your hand.</div>
       <div class="line">Lift your hands to brighten the energy.</div>
       <div class="line">In Auto mode, movement unlocks different energy worlds.</div>
-      <div class="line">Move fast to make bigger reactions.</div>
+      <div class="line">Your whole group becomes part of the picture.</div>
     </div>
   `;
   document.body.appendChild(instructionOverlay);
@@ -434,7 +469,7 @@
   }
 
   // =========================================================
-  // TENSORFLOW
+  // TENSORFLOW POSE
   // =========================================================
   async function initDetector() {
     if (!window.poseDetection) {
@@ -723,7 +758,7 @@
   }
 
   // =========================================================
-  // POSE INPUT
+  // MAIN PLAYER POSE
   // =========================================================
   async function updatePoseInput() {
     if (!detectorReady || !video.videoWidth || !video.videoHeight) {
@@ -862,7 +897,7 @@
   }
 
   // =========================================================
-  // MOTION FALLBACK
+  // MOTION FALLBACK FOR MAIN CONTROL
   // =========================================================
   function updateMotionFallback() {
     if (!video.videoWidth || !video.videoHeight) return;
@@ -875,8 +910,8 @@
     const frame = motionCtx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
     const data = frame.data;
 
-    if (!prevFrame) {
-      prevFrame = new Uint8ClampedArray(data);
+    if (!prevMotionFrame) {
+      prevMotionFrame = new Uint8ClampedArray(data);
       return;
     }
 
@@ -888,9 +923,9 @@
       for (let x = 0; x < motionCanvas.width; x += CONFIG.opticalFallbackStep) {
         const i = (y * motionCanvas.width + x) * 4;
 
-        const dr = Math.abs(data[i] - prevFrame[i]);
-        const dg = Math.abs(data[i + 1] - prevFrame[i + 1]);
-        const db = Math.abs(data[i + 2] - prevFrame[i + 2]);
+        const dr = Math.abs(data[i] - prevMotionFrame[i]);
+        const dg = Math.abs(data[i + 1] - prevMotionFrame[i + 1]);
+        const db = Math.abs(data[i + 2] - prevMotionFrame[i + 2]);
 
         const diff = dr + dg + db;
 
@@ -902,7 +937,7 @@
       }
     }
 
-    prevFrame.set(data);
+    prevMotionFrame.set(data);
 
     if (active >= CONFIG.opticalFallbackMinActive) {
       const mx = sumX / active;
@@ -931,6 +966,94 @@
       state.handsUp = false;
       state.stillness = lerp(state.stillness, 1, 0.04);
     }
+  }
+
+  // =========================================================
+  // CROWD SILHOUETTES
+  // =========================================================
+  function updateCrowdSilhouettes() {
+    if (!video.videoWidth || !video.videoHeight) return;
+    if (frameCount % CONFIG.silhouetteUpdateEvery !== 0) return;
+
+    silhouetteCtx.save();
+    silhouetteCtx.scale(-1, 1);
+    silhouetteCtx.drawImage(
+      video,
+      -silhouetteCanvas.width,
+      0,
+      silhouetteCanvas.width,
+      silhouetteCanvas.height
+    );
+    silhouetteCtx.restore();
+
+    const frame = silhouetteCtx.getImageData(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
+    const data = frame.data;
+
+    if (!prevSilhouetteFrame) {
+      prevSilhouetteFrame = new Uint8ClampedArray(data);
+      return;
+    }
+
+    const mask = silhouetteMaskCtx.createImageData(silhouetteCanvas.width, silhouetteCanvas.height);
+    const m = mask.data;
+
+    for (let y = 0; y < silhouetteCanvas.height; y += CONFIG.silhouetteStep) {
+      for (let x = 0; x < silhouetteCanvas.width; x += CONFIG.silhouetteStep) {
+        const i = (y * silhouetteCanvas.width + x) * 4;
+
+        const dr = Math.abs(data[i] - prevSilhouetteFrame[i]);
+        const dg = Math.abs(data[i + 1] - prevSilhouetteFrame[i + 1]);
+        const db = Math.abs(data[i + 2] - prevSilhouetteFrame[i + 2]);
+        const diff = dr + dg + db;
+
+        const isBodyish = diff > CONFIG.silhouetteThreshold;
+
+        if (isBodyish) {
+          const tintMix = (x / silhouetteCanvas.width);
+          const r = lerp(0, 255, tintMix * 0.65);
+          const g = lerp(184, 0, tintMix * 0.35);
+          const b = lerp(255, 140, tintMix * 0.55);
+          const a = 255;
+
+          for (let yy = 0; yy < CONFIG.silhouetteStep; yy++) {
+            for (let xx = 0; xx < CONFIG.silhouetteStep; xx++) {
+              const px = x + xx;
+              const py = y + yy;
+              if (px >= silhouetteCanvas.width || py >= silhouetteCanvas.height) continue;
+              const ii = (py * silhouetteCanvas.width + px) * 4;
+              m[ii] = r;
+              m[ii + 1] = g;
+              m[ii + 2] = b;
+              m[ii + 3] = a;
+            }
+          }
+        }
+      }
+    }
+
+    prevSilhouetteFrame.set(data);
+
+    silhouetteMaskCtx.putImageData(mask, 0, 0);
+  }
+
+  function drawCrowdSilhouettes(t) {
+    silhouetteLargeCtx.clearRect(0, 0, W, H);
+    silhouetteLargeCtx.save();
+    silhouetteLargeCtx.filter = `blur(${CONFIG.silhouetteBlur}px)`;
+    silhouetteLargeCtx.globalAlpha = CONFIG.silhouetteAlpha;
+    silhouetteLargeCtx.drawImage(silhouetteMaskCanvas, 0, 0, W, H);
+    silhouetteLargeCtx.restore();
+
+    const pulse = 0.85 + Math.sin(t * 0.002) * 0.15;
+
+    ctx.save();
+    ctx.globalCompositeOperation = "multiply";
+    ctx.globalAlpha = CONFIG.silhouetteAlpha * pulse;
+    ctx.drawImage(silhouetteLargeCanvas, 0, 0);
+
+    ctx.globalAlpha = CONFIG.silhouetteGlowAlpha;
+    ctx.drawImage(silhouetteLargeCanvas, 0, 0);
+    ctx.restore();
   }
 
   // =========================================================
@@ -1101,6 +1224,7 @@
   async function animate(t) {
     if (!started) return;
 
+    frameCount++;
     const dt = Math.min(0.033, (t - lastTime) / 1000);
     lastTime = t;
 
@@ -1108,6 +1232,8 @@
     if (!poseWorked) {
       updateMotionFallback();
     }
+
+    updateCrowdSilhouettes();
 
     state.targetX = lerp(state.targetX, state.rawTargetX, CONFIG.poseSmoothing);
     state.targetY = lerp(state.targetY, state.rawTargetY, CONFIG.poseSmoothing);
@@ -1122,6 +1248,7 @@
     ctx.fillRect(0, 0, W, H);
 
     drawBackgroundGlow(t);
+    drawCrowdSilhouettes(t);
     drawGalaxyStars(t);
 
     ctx.globalCompositeOperation = "multiply";
