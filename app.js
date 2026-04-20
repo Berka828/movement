@@ -20,50 +20,50 @@
   // CONFIG
   // =========================================================
   const CONFIG = {
-    particleCount: 1850,
-    backgroundFade: 0.09,
-    dragBase: 0.965,
-    baseLineWidth: 1.3,
-    maxSpeedBase: 4.4,
-    targetPullBase: 0.010,
-    swirlBase: 0.014,
-    noiseScaleBase: 0.006,
-    noiseStrengthBase: 0.42,
-    spreadBase: 90,
-    burstCount: 320,
-    burstForce: 6.6,
-    poseSmoothing: 0.16,
-    energySmoothing: 0.10,
-    spreadSmoothing: 0.12,
-    shoulderConfidence: 0.25,
-    wristConfidence: 0.20,
-    defaultEnergy: 0.08,
-    minHandDistance: 40,
-    maxHandDistance: 380,
-    opticalFallbackThreshold: 32,
-    opticalFallbackStep: 10,
-    opticalFallbackMinActive: 55,
-    debugVideoOpacity: 0.18,
-    stateHoldMs: 1200,
-    burstCooldownMs: 900,
-    idleStillnessThreshold: 14,
-    bigGestureThreshold: 150,
-    kioskHideDelayMs: 5000,
-    instructionFadeAfterMs: 9000,
-    instructionPulseSpeed: 0.002,
+    logoPath: "bxcm-logo.png",
 
-    // crowd silhouette settings
-    silhouetteWidth: 320,
-    silhouetteHeight: 240,
-    silhouetteThreshold: 34,
-    silhouetteStep: 4,
-    silhouetteAlpha: 0.22,
-    silhouetteBlur: 10,
-    silhouetteTintA: "0,184,255",   // cyan
-    silhouetteTintB: "255,0,140",   // magenta
-    silhouetteGlowAlpha: 0.16,
-    silhouetteUpdateEvery: 1
+    cameraWidth: 640,
+    cameraHeight: 480,
+
+    diffWidth: 320,
+    diffHeight: 240,
+    diffStep: 6,
+    diffThreshold: 34,
+    minActiveCells: 24,
+
+    fogReturnAlphaBase: 0.010,
+    fogTextureDensity: 28,
+    fogTextureSizeMin: 50,
+    fogTextureSizeMax: 180,
+
+    eraseRadiusBase: 28,
+    eraseRadiusMax: 85,
+    eraseStrength: 0.95,
+
+    sparkleLifeMin: 16,
+    sparkleLifeMax: 40,
+    sparkleMax: 220,
+
+    revealCheckEvery: 12,
+    autoHideMs: 5000,
+    introFadeAfterMs: 8500
   };
+
+  // =========================================================
+  // BxCM COLORS
+  // =========================================================
+  const BXCM_COLORS = [
+    "#f8c400", // yellow
+    "#f28c1b", // orange
+    "#1fa5dc", // blue
+    "#a12c92", // magenta
+    "#4a9a3f", // green
+    "#4b2ca3"  // purple
+  ];
+
+  function colorAt(i) {
+    return BXCM_COLORS[i % BXCM_COLORS.length];
+  }
 
   // =========================================================
   // STATE
@@ -72,72 +72,88 @@
   let H = window.innerHeight;
   let DPR = Math.min(window.devicePixelRatio || 1, 2);
 
-  let animationId = null;
   let stream = null;
-  let detector = null;
-  let detectorReady = false;
+  let selectedDeviceId = null;
   let started = false;
   let debugOn = false;
-  let selectedDeviceId = null;
-  let lastTime = performance.now();
-  let lastBurstAt = 0;
-  let kioskMode = false;
+  let frameCount = 0;
+  let animationId = null;
   let uiHideTimeout = null;
   let experienceStartedAt = 0;
   let firstGestureActivated = false;
-  let frameCount = 0;
+  let celebrationOn = false;
+  let lastCelebrationAt = 0;
 
   const state = {
-    targetX: W * 0.5,
-    targetY: H * 0.5,
-    rawTargetX: W * 0.5,
-    rawTargetY: H * 0.5,
-    prevRawTargetX: W * 0.5,
-    prevRawTargetY: H * 0.5,
-    velocityMag: 0,
-    energy: 0.1,
-    rawEnergy: 0.1,
-    spread: 0.25,
-    rawSpread: 0.25,
-    leftHandYNorm: 0.5,
-    rightHandXNorm: 0.5,
-    rightHandYNorm: 0.5,
-    activePose: false,
-    burstRequested: false,
-    wristLeft: null,
-    wristRight: null,
-    shoulderCenter: null,
-    handsUp: false,
-    handsWide: false,
-    bigGesture: false,
-    stillness: 0,
-    currentMode: "CALM",
-    modeSince: performance.now(),
-    lockedMode: "AUTO",
-    galaxySpin: 0,
-    lastPoseSeenAt: 0
+    mode: "AUTO",
+    autoModeResolved: "GLOW",
+    motionEnergy: 0,
+    revealRatio: 0,
+    introVisible: true
   };
+
+  // =========================================================
+  // LOGO IMAGE
+  // =========================================================
+  const logoImg = new Image();
+  let logoReady = false;
+  logoImg.onload = () => {
+    logoReady = true;
+  };
+  logoImg.onerror = () => {
+    console.warn("Could not load logo at:", CONFIG.logoPath);
+  };
+  logoImg.src = CONFIG.logoPath;
 
   // =========================================================
   // OFFSCREEN CANVASES
   // =========================================================
-  const motionCanvas = document.createElement("canvas");
-  const motionCtx = motionCanvas.getContext("2d", { willReadFrequently: true });
-  let prevMotionFrame = null;
+  const diffCanvas = document.createElement("canvas");
+  const diffCtx = diffCanvas.getContext("2d", { willReadFrequently: true });
 
-  const silhouetteCanvas = document.createElement("canvas");
-  const silhouetteCtx = silhouetteCanvas.getContext("2d", { willReadFrequently: true });
+  const fogCanvas = document.createElement("canvas");
+  const fogCtx = fogCanvas.getContext("2d");
 
-  const silhouetteMaskCanvas = document.createElement("canvas");
-  const silhouetteMaskCtx = silhouetteMaskCanvas.getContext("2d", { willReadFrequently: true });
+  const logoCanvas = document.createElement("canvas");
+  const logoCtx = logoCanvas.getContext("2d");
 
-  const silhouetteLargeCanvas = document.createElement("canvas");
-  const silhouetteLargeCtx = silhouetteLargeCanvas.getContext("2d");
+  const revealSampleCanvas = document.createElement("canvas");
+  const revealSampleCtx = revealSampleCanvas.getContext("2d", { willReadFrequently: true });
 
-  let prevSilhouetteFrame = null;
+  let prevFrame = null;
+
+  function resize() {
+    W = window.innerWidth;
+    H = window.innerHeight;
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+
+    canvas.width = Math.floor(W * DPR);
+    canvas.height = Math.floor(H * DPR);
+    canvas.style.width = `${W}px`;
+    canvas.style.height = `${H}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+
+    diffCanvas.width = CONFIG.diffWidth;
+    diffCanvas.height = CONFIG.diffHeight;
+
+    fogCanvas.width = W;
+    fogCanvas.height = H;
+
+    logoCanvas.width = W;
+    logoCanvas.height = H;
+
+    revealSampleCanvas.width = 160;
+    revealSampleCanvas.height = 90;
+
+    buildFog(true);
+    renderLogoLayer();
+  }
+
+  window.addEventListener("resize", resize);
+  resize();
 
   // =========================================================
-  // UTILS
+  // UTIL
   // =========================================================
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -152,118 +168,80 @@
     return outMin + (outMax - outMin) * t;
   }
 
-  function dist(a, b) {
-    const dx = a.x - b.x;
-    const dy = a.y - b.y;
-    return Math.sqrt(dx * dx + dy * dy);
+  function rand(min, max) {
+    return Math.random() * (max - min) + min;
   }
 
-  function nowMs() {
-    return performance.now();
+  function pick(arr) {
+    return arr[(Math.random() * arr.length) | 0];
   }
-
-  function resize() {
-    W = window.innerWidth;
-    H = window.innerHeight;
-    DPR = Math.min(window.devicePixelRatio || 1, 2);
-
-    canvas.width = Math.floor(W * DPR);
-    canvas.height = Math.floor(H * DPR);
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-
-    motionCanvas.width = 320;
-    motionCanvas.height = 240;
-
-    silhouetteCanvas.width = CONFIG.silhouetteWidth;
-    silhouetteCanvas.height = CONFIG.silhouetteHeight;
-
-    silhouetteMaskCanvas.width = CONFIG.silhouetteWidth;
-    silhouetteMaskCanvas.height = CONFIG.silhouetteHeight;
-
-    silhouetteLargeCanvas.width = W;
-    silhouetteLargeCanvas.height = H;
-  }
-
-  window.addEventListener("resize", resize);
-  resize();
 
   // =========================================================
-  // OVERLAYS
+  // UI / OVERLAY
   // =========================================================
-  const instructionOverlay = document.createElement("div");
-  instructionOverlay.id = "instructionOverlay";
-  instructionOverlay.innerHTML = `
-    <div id="instructionInner">
-      <div class="line museum">BRONX CHILDREN’S MUSEUM</div>
-      <div class="line big">MOVE THE ENERGY</div>
-      <div class="line">Use your body to explore light, motion, color, and sound.</div>
-      <div class="line">Guide the flow with your hand.</div>
-      <div class="line">Lift your hands to brighten the energy.</div>
-      <div class="line">In Auto mode, movement unlocks different energy worlds.</div>
-      <div class="line">Your whole group becomes part of the picture.</div>
+  const intro = document.createElement("div");
+  intro.innerHTML = `
+    <div id="bxcmIntroInner">
+      <div class="museum">BRONX CHILDREN’S MUSEUM</div>
+      <div class="big">REVEAL THE LOGO</div>
+      <div class="line">Move your body to brush away the cloud.</div>
+      <div class="line">Work together to uncover BxCM.</div>
+      <div class="line">Fast motion reveals more.</div>
     </div>
   `;
-  document.body.appendChild(instructionOverlay);
+  document.body.appendChild(intro);
 
-  Object.assign(instructionOverlay.style, {
+  Object.assign(intro.style, {
     position: "fixed",
     inset: "0",
+    zIndex: "30",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     pointerEvents: "none",
-    zIndex: "30",
     transition: "opacity 0.8s ease",
     opacity: "1"
   });
 
-  const instructionInner = instructionOverlay.querySelector("#instructionInner");
-  Object.assign(instructionInner.style, {
-    color: "#123",
+  const introInner = intro.querySelector("#bxcmIntroInner");
+  Object.assign(introInner.style, {
     textAlign: "center",
     fontFamily: "Arial, sans-serif",
-    textShadow: "0 2px 10px rgba(255,255,255,0.65), 0 0 28px rgba(0,184,255,0.18)",
-    letterSpacing: "1px",
-    maxWidth: "980px",
-    padding: "24px"
+    color: "#17324d",
+    textShadow: "0 2px 10px rgba(255,255,255,0.8), 0 0 24px rgba(31,165,220,0.18)",
+    padding: "24px",
+    maxWidth: "960px"
   });
 
-  Array.from(instructionInner.querySelectorAll(".line")).forEach((line) => {
-    let fontSize = "22px";
-    let fontWeight = "500";
-    let color = "#17324d";
-    let margin = "10px 0";
-
-    if (line.classList.contains("museum")) {
-      fontSize = "16px";
-      fontWeight = "700";
-      color = "#00a8d8";
-      margin = "0 0 10px 0";
-      line.style.letterSpacing = "2px";
+  Array.from(introInner.children).forEach((el) => {
+    if (el.classList.contains("museum")) {
+      Object.assign(el.style, {
+        fontSize: "16px",
+        fontWeight: "700",
+        letterSpacing: "2px",
+        color: "#1fa5dc",
+        margin: "0 0 10px 0"
+      });
+    } else if (el.classList.contains("big")) {
+      Object.assign(el.style, {
+        fontSize: "76px",
+        fontWeight: "800",
+        lineHeight: "0.95",
+        color: "#0f2a44",
+        margin: "0 0 18px 0"
+      });
+    } else {
+      Object.assign(el.style, {
+        fontSize: "22px",
+        fontWeight: "500",
+        color: "#17324d",
+        margin: "10px 0"
+      });
     }
-
-    if (line.classList.contains("big")) {
-      fontSize = "76px";
-      fontWeight = "800";
-      color = "#0f2a44";
-      margin = "0 0 18px 0";
-      line.style.lineHeight = "0.95";
-      line.style.textShadow = "0 0 24px rgba(0,184,255,0.16), 0 0 34px rgba(255,0,140,0.10)";
-    }
-
-    Object.assign(line.style, {
-      margin,
-      fontSize,
-      fontWeight,
-      color
-    });
   });
 
   const modeBadge = document.createElement("div");
-  modeBadge.id = "modeBadge";
-  modeBadge.textContent = "MODE: GLOW";
+  modeBadge.textContent = "MODE: AUTO";
   document.body.appendChild(modeBadge);
 
   Object.assign(modeBadge.style, {
@@ -277,37 +255,44 @@
     letterSpacing: "1px",
     padding: "10px 16px",
     borderRadius: "999px",
-    background: "linear-gradient(180deg, rgba(0,184,255,0.18), rgba(255,0,140,0.10))",
-    border: "1px solid rgba(0,184,255,0.18)",
+    background: "linear-gradient(180deg, rgba(31,165,220,0.18), rgba(161,44,146,0.10))",
+    border: "1px solid rgba(31,165,220,0.18)",
     backdropFilter: "blur(6px)",
-    boxShadow: "0 0 20px rgba(0,184,255,0.10)",
+    boxShadow: "0 0 20px rgba(31,165,220,0.10)",
     opacity: "0.96",
     transition: "opacity 0.5s ease"
   });
 
-  // =========================================================
-  // VIDEO STYLE
-  // =========================================================
-  function updateDebugUI() {
-    video.style.opacity = debugOn ? String(CONFIG.debugVideoOpacity) : "0";
-    video.style.pointerEvents = "none";
-    video.style.transform = "scaleX(-1)";
-    video.style.position = "fixed";
-    video.style.right = "20px";
-    video.style.bottom = "20px";
-    video.style.width = "220px";
-    video.style.height = "165px";
-    video.style.objectFit = "cover";
-    video.style.borderRadius = "14px";
-    video.style.zIndex = "22";
-    video.style.border = "2px solid rgba(0,184,255,0.25)";
-    video.style.boxShadow = "0 0 20px rgba(0,184,255,0.12)";
-    if (debugBtn) {
-      debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
-    }
+  function updateModeBadge() {
+    const label = state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode;
+    modeBadge.textContent = `MODE: ${label}`;
   }
 
-  updateDebugUI();
+  function hideUIForKiosk() {
+    if (!ui) return;
+    ui.style.transition = "opacity 0.7s ease";
+    ui.style.opacity = "0";
+    ui.style.pointerEvents = "none";
+  }
+
+  function showUI() {
+    if (!ui) return;
+    ui.style.opacity = "1";
+    ui.style.pointerEvents = "auto";
+  }
+
+  function scheduleUIHide() {
+    if (uiHideTimeout) clearTimeout(uiHideTimeout);
+    uiHideTimeout = setTimeout(() => hideUIForKiosk(), CONFIG.autoHideMs);
+  }
+
+  function fadeIntroIfNeeded(now) {
+    const elapsed = now - experienceStartedAt;
+    if (elapsed > CONFIG.introFadeAfterMs) {
+      intro.style.opacity = "0";
+      state.introVisible = false;
+    }
+  }
 
   // =========================================================
   // AUDIO
@@ -315,45 +300,34 @@
   let audioCtx = null;
   let humOsc = null;
   let humGain = null;
-  let energyOsc = null;
-  let energyGain = null;
-  let filterNode = null;
+  let revealOsc = null;
+  let revealGain = null;
 
   function initAudio() {
     if (audioCtx) return;
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    if (!AudioContextClass) return;
 
-    audioCtx = new AudioContextClass();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+
+    audioCtx = new AC();
 
     humOsc = audioCtx.createOscillator();
     humGain = audioCtx.createGain();
-    filterNode = audioCtx.createBiquadFilter();
-    energyOsc = audioCtx.createOscillator();
-    energyGain = audioCtx.createGain();
-
     humOsc.type = "sine";
-    humOsc.frequency.value = 78;
-
-    filterNode.type = "lowpass";
-    filterNode.frequency.value = 600;
-    filterNode.Q.value = 0.8;
-
+    humOsc.frequency.value = 90;
     humGain.gain.value = 0.0001;
-
-    energyOsc.type = "triangle";
-    energyOsc.frequency.value = 190;
-    energyGain.gain.value = 0.0001;
-
-    humOsc.connect(filterNode);
-    filterNode.connect(humGain);
+    humOsc.connect(humGain);
     humGain.connect(audioCtx.destination);
-
-    energyOsc.connect(energyGain);
-    energyGain.connect(audioCtx.destination);
-
     humOsc.start();
-    energyOsc.start();
+
+    revealOsc = audioCtx.createOscillator();
+    revealGain = audioCtx.createGain();
+    revealOsc.type = "triangle";
+    revealOsc.frequency.value = 180;
+    revealGain.gain.value = 0.0001;
+    revealOsc.connect(revealGain);
+    revealGain.connect(audioCtx.destination);
+    revealOsc.start();
   }
 
   async function resumeAudio() {
@@ -362,53 +336,44 @@
       try {
         await audioCtx.resume();
       } catch (err) {
-        console.warn("Audio resume failed:", err);
+        console.warn(err);
       }
     }
   }
 
   function updateAudio() {
-    if (!audioCtx || !humOsc || !humGain || !energyOsc || !energyGain || !filterNode) return;
+    if (!audioCtx) return;
 
-    const e = state.energy;
-    const brightness = 1 - state.leftHandYNorm;
-    const idleAmt = clamp(1 - e * 2.5, 0, 1);
+    const e = state.motionEnergy;
+    const reveal = state.revealRatio;
 
-    humOsc.frequency.setTargetAtTime(72 + idleAmt * 16, audioCtx.currentTime, 0.08);
-    humGain.gain.setTargetAtTime(0.008 + idleAmt * 0.018, audioCtx.currentTime, 0.12);
+    humOsc.frequency.setTargetAtTime(82 + e * 22, audioCtx.currentTime, 0.08);
+    humGain.gain.setTargetAtTime(0.008 + (1 - e) * 0.01, audioCtx.currentTime, 0.12);
 
-    energyOsc.frequency.setTargetAtTime(180 + e * 440 + brightness * 110, audioCtx.currentTime, 0.05);
-    energyGain.gain.setTargetAtTime(0.001 + e * 0.03, audioCtx.currentTime, 0.08);
-
-    filterNode.frequency.setTargetAtTime(450 + e * 1100, audioCtx.currentTime, 0.08);
+    revealOsc.frequency.setTargetAtTime(160 + e * 240 + reveal * 120, audioCtx.currentTime, 0.08);
+    revealGain.gain.setTargetAtTime(0.001 + e * 0.02 + reveal * 0.01, audioCtx.currentTime, 0.08);
   }
 
-  function playBurstSound() {
+  function playCelebrateSound() {
     if (!audioCtx) return;
 
     const t = audioCtx.currentTime;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    const filter = audioCtx.createBiquadFilter();
+    [0, 4, 7].forEach((semitones, i) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
 
-    osc.type = "square";
-    osc.frequency.setValueAtTime(260, t);
-    osc.frequency.exponentialRampToValueAtTime(82, t + 0.18);
+      osc.type = "triangle";
+      osc.frequency.value = 440 * Math.pow(2, semitones / 12);
 
-    filter.type = "bandpass";
-    filter.frequency.value = 900;
-    filter.Q.value = 1.2;
+      gain.gain.setValueAtTime(0.0001, t + i * 0.04);
+      gain.gain.linearRampToValueAtTime(0.05, t + i * 0.04 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.04 + 0.35);
 
-    gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.linearRampToValueAtTime(0.055, t + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
-
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(audioCtx.destination);
-
-    osc.start(t);
-    osc.stop(t + 0.25);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t + i * 0.04);
+      osc.stop(t + i * 0.04 + 0.4);
+    });
   }
 
   // =========================================================
@@ -421,6 +386,7 @@
 
   async function populateCameraList() {
     if (!cameraSelect) return;
+
     const cameras = await getCameras();
     cameraSelect.innerHTML = "";
 
@@ -441,839 +407,451 @@
 
   async function startCamera(deviceId) {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(t => t.stop());
       stream = null;
     }
 
-    const constraints = {
+    stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
-        width: { ideal: 640 },
-        height: { ideal: 480 },
+        width: { ideal: CONFIG.cameraWidth },
+        height: { ideal: CONFIG.cameraHeight },
         frameRate: { ideal: 30, max: 30 }
       }
-    };
+    });
 
-    stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream;
     await video.play();
 
     const track = stream.getVideoTracks()[0];
     const settings = track.getSettings();
-    if (settings.deviceId) {
-      selectedDeviceId = settings.deviceId;
-    }
+    if (settings.deviceId) selectedDeviceId = settings.deviceId;
 
     await populateCameraList();
   }
 
   // =========================================================
-  // TENSORFLOW POSE
+  // LOGO LAYER
   // =========================================================
-  async function initDetector() {
-    if (!window.poseDetection) {
-      throw new Error("pose-detection library not loaded.");
+  function renderLogoLayer() {
+    logoCtx.clearRect(0, 0, W, H);
+
+    // white background
+    logoCtx.fillStyle = "#f8fbff";
+    logoCtx.fillRect(0, 0, W, H);
+
+    // ambient BxCM color wash
+    const gradA = logoCtx.createRadialGradient(W * 0.35, H * 0.4, 0, W * 0.35, H * 0.4, W * 0.45);
+    gradA.addColorStop(0, "rgba(31,165,220,0.12)");
+    gradA.addColorStop(1, "rgba(31,165,220,0)");
+    logoCtx.fillStyle = gradA;
+    logoCtx.fillRect(0, 0, W, H);
+
+    const gradB = logoCtx.createRadialGradient(W * 0.68, H * 0.42, 0, W * 0.68, H * 0.42, W * 0.42);
+    gradB.addColorStop(0, "rgba(161,44,146,0.10)");
+    gradB.addColorStop(1, "rgba(161,44,146,0)");
+    logoCtx.fillStyle = gradB;
+    logoCtx.fillRect(0, 0, W, H);
+
+    if (!logoReady) {
+      // fallback text if logo image is not available
+      logoCtx.fillStyle = "#0f2a44";
+      logoCtx.font = "bold 84px Arial";
+      logoCtx.textAlign = "center";
+      logoCtx.fillText("BxCM", W / 2, H / 2);
+      return;
     }
 
-    await tf.setBackend("webgl");
-    await tf.ready();
+    const maxW = W * 0.68;
+    const maxH = H * 0.38;
+    const scale = Math.min(maxW / logoImg.width, maxH / logoImg.height);
+    const drawW = logoImg.width * scale;
+    const drawH = logoImg.height * scale;
+    const x = (W - drawW) / 2;
+    const y = (H - drawH) / 2;
 
-    detector = await poseDetection.createDetector(
-      poseDetection.SupportedModels.MoveNet,
-      {
-        modelType: poseDetection.movenet.modelType.SINGLEPOSE_LIGHTNING,
-        enableSmoothing: true
-      }
-    );
+    // halo
+    logoCtx.save();
+    logoCtx.shadowBlur = 42;
+    logoCtx.shadowColor = "rgba(31,165,220,0.22)";
+    logoCtx.drawImage(logoImg, x, y, drawW, drawH);
+    logoCtx.restore();
 
-    detectorReady = true;
-  }
-
-  function getKeypoint(pose, name, minScore = 0.2) {
-    if (!pose || !pose.keypoints) return null;
-    const kp = pose.keypoints.find(k => k.name === name);
-    if (!kp) return null;
-    if ((kp.score ?? 0) < minScore) return null;
-    return kp;
+    // actual logo
+    logoCtx.drawImage(logoImg, x, y, drawW, drawH);
   }
 
   // =========================================================
-  // MODE LABELS
+  // FOG BUILD
   // =========================================================
-  function displayModeName(mode) {
-    if (mode === "CALM") return "GLOW";
-    if (mode === "CHAOS") return "STORM";
-    if (mode === "MIRROR") return "TWIN";
-    if (mode === "GALAXY") return "SPACE";
-    return mode;
-  }
-
-  function setMode(mode) {
-    if (state.currentMode === mode) return;
-    state.currentMode = mode;
-    state.modeSince = nowMs();
-    modeBadge.textContent = `MODE: ${displayModeName(mode)}`;
-  }
-
-  // =========================================================
-  // PARTICLES
-  // =========================================================
-  class Particle {
-    constructor() {
-      this.reset(Math.random() * W, Math.random() * H);
+  function buildFog(fullReset = false) {
+    if (fullReset) {
+      fogCtx.clearRect(0, 0, W, H);
+      fogCtx.fillStyle = "rgba(255,255,255,0.98)";
+      fogCtx.fillRect(0, 0, W, H);
     }
 
-    reset(x, y) {
-      this.x = x;
-      this.y = y;
-      this.px = x;
-      this.py = y;
-      this.vx = (Math.random() - 0.5) * 1.2;
-      this.vy = (Math.random() - 0.5) * 1.2;
-      this.life = Math.random() * 180 + 60;
-      this.seed = Math.random() * 1000;
-      this.width = Math.random();
+    // soft cloud puffs
+    for (let i = 0; i < CONFIG.fogTextureDensity; i++) {
+      const x = rand(0, W);
+      const y = rand(0, H);
+      const r = rand(CONFIG.fogTextureSizeMin, CONFIG.fogTextureSizeMax);
+
+      const g = fogCtx.createRadialGradient(x, y, 0, x, y, r);
+      g.addColorStop(0, "rgba(255,255,255,0.24)");
+      g.addColorStop(0.6, "rgba(244,248,255,0.12)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+
+      fogCtx.fillStyle = g;
+      fogCtx.beginPath();
+      fogCtx.arc(x, y, r, 0, Math.PI * 2);
+      fogCtx.fill();
     }
+  }
 
-    update(dt, t) {
-      this.px = this.x;
-      this.py = this.y;
+  // =========================================================
+  // SPARKLES
+  // =========================================================
+  const sparkles = [];
 
-      const dx = state.targetX - this.x;
-      const dy = state.targetY - this.y;
-      const d = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-      const nx = dx / d;
-      const ny = dy / d;
+  function spawnSparkle(x, y, strength = 1) {
+    if (sparkles.length > CONFIG.sparkleMax) return;
 
-      const mode = state.currentMode;
-      const leftHigh = 1 - state.leftHandYNorm;
-
-      let drag = CONFIG.dragBase;
-      let swirl = CONFIG.swirlBase + state.energy * 0.03;
-      let targetPull = CONFIG.targetPullBase + state.energy * 0.018;
-      let maxSpeed = CONFIG.maxSpeedBase + state.energy * 5.0;
-      let noiseScale = CONFIG.noiseScaleBase + state.spread * 0.008;
-      let noiseStrength = CONFIG.noiseStrengthBase + leftHigh * 0.9 + state.energy * 0.7;
-      let orbitBoost = 1;
-      let galaxySpiral = 0;
-
-      if (mode === "CALM") {
-        drag = 0.976;
-        swirl *= 0.7;
-        targetPull *= 0.92;
-        noiseStrength *= 0.58;
-        maxSpeed *= 0.88;
-      } else if (mode === "CHAOS") {
-        drag = 0.952;
-        swirl *= 1.95;
-        targetPull *= 1.42;
-        noiseStrength *= 2.0;
-        maxSpeed *= 1.7;
-      } else if (mode === "MIRROR") {
-        drag = 0.967;
-        swirl *= 1.25;
-        targetPull *= 1.05;
-        noiseStrength *= 0.95;
-        orbitBoost = 1.35;
-      } else if (mode === "GALAXY") {
-        drag = 0.972;
-        swirl *= 1.38;
-        targetPull *= 0.72;
-        noiseStrength *= 0.68;
-        maxSpeed *= 0.98;
-        galaxySpiral = 0.04;
-      }
-
-      const angle = Math.atan2(dy, dx);
-      const tangentialX = -Math.sin(angle) * swirl * 18 * orbitBoost / (1 + d * 0.01);
-      const tangentialY =  Math.cos(angle) * swirl * 18 * orbitBoost / (1 + d * 0.01);
-
-      const noise =
-        Math.sin(this.x * noiseScale + t * 0.0007 + this.seed) +
-        Math.cos(this.y * noiseScale - t * 0.0009 + this.seed * 0.7);
-
-      const noiseX = Math.cos(noise + angle * 0.7) * noiseStrength * 0.09;
-      const noiseY = Math.sin(noise - angle * 0.7) * noiseStrength * 0.09;
-
-      const spiralX = Math.cos(angle + state.galaxySpin) * galaxySpiral;
-      const spiralY = Math.sin(angle + state.galaxySpin) * galaxySpiral;
-
-      this.vx += nx * targetPull + tangentialX + noiseX + spiralX;
-      this.vy += ny * targetPull + tangentialY + noiseY + spiralY;
-
-      if (mode === "MIRROR" && this.x > W * 0.5) {
-        this.vx -= (this.x - W * 0.5) * 0.0008;
-      }
-
-      this.vx *= drag;
-      this.vy *= drag;
-
-      const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-      if (speed > maxSpeed) {
-        const m = maxSpeed / speed;
-        this.vx *= m;
-        this.vy *= m;
-      }
-
-      this.x += this.vx * dt * 60;
-      this.y += this.vy * dt * 60;
-
-      this.life -= dt * 60;
-
-      if (
-        this.life <= 0 ||
-        this.x < -120 || this.x > W + 120 ||
-        this.y < -120 || this.y > H + 120
-      ) {
-        const a = Math.random() * Math.PI * 2;
-        const r = Math.random() * (CONFIG.spreadBase + state.spread * 240);
-        this.reset(
-          state.targetX + Math.cos(a) * r,
-          state.targetY + Math.sin(a) * r
-        );
-      }
+    const count = 2 + ((strength * 5) | 0);
+    for (let i = 0; i < count; i++) {
+      sparkles.push({
+        x,
+        y,
+        vx: rand(-1.8, 1.8) * strength,
+        vy: rand(-2.0, 0.6) * strength,
+        life: rand(CONFIG.sparkleLifeMin, CONFIG.sparkleLifeMax),
+        maxLife: 0,
+        size: rand(2, 7),
+        color: pick(BXCM_COLORS)
+      });
+      sparkles[sparkles.length - 1].maxLife = sparkles[sparkles.length - 1].life;
     }
+  }
 
-    draw(t) {
-      const dx = this.x - this.px;
-      const dy = this.y - this.py;
-      const speed = Math.sqrt(dx * dx + dy * dy);
-      const moveHeat = clamp(speed / 5.3, 0, 1);
-      const handBright = 1 - state.leftHandYNorm;
+  function updateAndDrawSparkles() {
+    for (let i = sparkles.length - 1; i >= 0; i--) {
+      const p = sparkles[i];
+      p.life -= 1;
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.02;
 
-      let hue;
-      let sat = 100;
-      let light = 48 + state.energy * 10 + handBright * 12;
-      let alpha = clamp(0.08 + speed * 0.035 + state.energy * 0.12, 0.06, 0.42);
-
-      if (state.currentMode === "CALM") {
-        hue = 198 + moveHeat * 26 + this.seed * 6;
-        sat = 95;
-        light = 44 + handBright * 10 + moveHeat * 7;
-        alpha *= 0.95;
-      } else if (state.currentMode === "CHAOS") {
-        hue = 16 + moveHeat * 38 + handBright * 15 + (t * 0.04 + this.seed * 40) % 24;
-        sat = 100;
-        light = 48 + handBright * 14 + moveHeat * 12;
-        alpha *= 1.02;
-      } else if (state.currentMode === "MIRROR") {
-        hue = 304 + moveHeat * 30 + this.seed * 12;
-        sat = 92;
-        light = 48 + handBright * 10 + moveHeat * 8;
-      } else {
-        hue = 228 + state.galaxySpin * 100 + this.seed * 20;
-        sat = 100;
-        light = 46 + handBright * 12 + moveHeat * 8;
+      if (p.life <= 0) {
+        sparkles.splice(i, 1);
+        continue;
       }
 
-      const lw =
-        CONFIG.baseLineWidth +
-        this.width * 0.9 +
-        state.spread * 2.0 +
-        speed * 0.04;
-
-      ctx.strokeStyle = `hsla(${hue % 360}, ${sat}%, ${light}%, ${alpha})`;
-      ctx.lineWidth = lw;
+      const alpha = p.life / p.maxLife;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.8;
+      ctx.fillStyle = p.color;
       ctx.beginPath();
-      ctx.moveTo(this.px, this.py);
-      ctx.lineTo(this.x, this.y);
-      ctx.stroke();
-
-      if (state.currentMode === "MIRROR") {
-        const mx1 = W - this.px;
-        const mx2 = W - this.x;
-        ctx.strokeStyle = `hsla(${(hue + 20) % 360}, ${sat}%, ${light + 2}%, ${alpha * 0.78})`;
-        ctx.beginPath();
-        ctx.moveTo(mx1, this.py);
-        ctx.lineTo(mx2, this.y);
-        ctx.stroke();
-      }
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
     }
   }
 
-  const particles = Array.from({ length: CONFIG.particleCount }, () => new Particle());
+  // =========================================================
+  // MODE FEEL
+  // =========================================================
+  function resolveAutoMode() {
+    const e = state.motionEnergy;
+    const r = state.revealRatio;
 
-  function burstAt(x, y) {
-    for (let i = 0; i < CONFIG.burstCount; i++) {
-      const p = particles[(Math.random() * particles.length) | 0];
-      const a = Math.random() * Math.PI * 2;
-      const f = Math.random() * CONFIG.burstForce + 1.2;
-
-      p.x = x;
-      p.y = y;
-      p.px = x;
-      p.py = y;
-      p.vx = Math.cos(a) * f;
-      p.vy = Math.sin(a) * f;
-      p.life = Math.random() * 100 + 60;
-    }
+    if (e > 0.62) return "STORM";
+    if (r > 0.68) return "SPACE";
+    if (e > 0.32) return "TWIN";
+    return "GLOW";
   }
 
-  function resetParticles() {
-    for (const p of particles) {
-      p.reset(Math.random() * W, Math.random() * H);
+  function getActiveMode() {
+    if (state.mode === "AUTO") {
+      state.autoModeResolved = resolveAutoMode();
+      return state.autoModeResolved;
     }
-    ctx.fillStyle = "rgba(255,255,255,1)";
-    ctx.fillRect(0, 0, W, H);
+    return state.mode;
   }
 
-  // =========================================================
-  // MODE CONTROL
-  // =========================================================
-  function updateModeLogic() {
-    if (state.lockedMode && state.lockedMode !== "AUTO") {
-      setMode(state.lockedMode);
-      return;
-    }
+  function modeParams() {
+    const mode = getActiveMode();
 
-    const t = nowMs();
-    const heldLongEnough = (t - state.modeSince) > CONFIG.stateHoldMs;
-
-    if (state.handsWide) {
-      setMode("MIRROR");
-      return;
-    }
-
-    if (state.bigGesture) {
-      setMode("CHAOS");
-      return;
-    }
-
-    if (state.handsUp) {
-      setMode("CALM");
-      return;
-    }
-
-    if (state.stillness > 0.75) {
-      setMode("GALAXY");
-      return;
-    }
-
-    if (!heldLongEnough && state.currentMode !== "CALM") return;
-
-    if (state.energy < 0.22) setMode("CALM");
-    else if (state.energy > 0.62) setMode("CHAOS");
-    else setMode("CALM");
-  }
-
-  // =========================================================
-  // MAIN PLAYER POSE
-  // =========================================================
-  async function updatePoseInput() {
-    if (!detectorReady || !video.videoWidth || !video.videoHeight) {
-      state.activePose = false;
-      return false;
-    }
-
-    let poses = [];
-    try {
-      poses = await detector.estimatePoses(video, { flipHorizontal: true });
-    } catch (err) {
-      console.error("Pose estimation error:", err);
-      state.activePose = false;
-      return false;
-    }
-
-    if (!poses || !poses.length) {
-      state.activePose = false;
-      return false;
-    }
-
-    const pose = poses[0];
-
-    const leftWrist = getKeypoint(pose, "left_wrist", CONFIG.wristConfidence);
-    const rightWrist = getKeypoint(pose, "right_wrist", CONFIG.wristConfidence);
-    const leftShoulder = getKeypoint(pose, "left_shoulder", CONFIG.shoulderConfidence);
-    const rightShoulder = getKeypoint(pose, "right_shoulder", CONFIG.shoulderConfidence);
-    const nose = getKeypoint(pose, "nose", 0.2);
-
-    if (!leftShoulder || !rightShoulder) {
-      state.activePose = false;
-      return false;
-    }
-
-    const shoulderCenter = {
-      x: (leftShoulder.x + rightShoulder.x) * 0.5,
-      y: (leftShoulder.y + rightShoulder.y) * 0.5
-    };
-
-    state.shoulderCenter = {
-      x: mapRange(shoulderCenter.x, 0, video.videoWidth, W, 0),
-      y: mapRange(shoulderCenter.y, 0, video.videoHeight, 0, H)
-    };
-
-    let primaryX = shoulderCenter.x;
-    let primaryY = shoulderCenter.y;
-
-    if (rightWrist) {
-      primaryX = rightWrist.x;
-      primaryY = rightWrist.y;
-      state.rightHandXNorm = clamp(rightWrist.x / video.videoWidth, 0, 1);
-      state.rightHandYNorm = clamp(rightWrist.y / video.videoHeight, 0, 1);
-      state.wristRight = {
-        x: mapRange(rightWrist.x, 0, video.videoWidth, W, 0),
-        y: mapRange(rightWrist.y, 0, video.videoHeight, 0, H)
+    if (mode === "STORM") {
+      return {
+        eraseBoost: 1.55,
+        returnAlpha: CONFIG.fogReturnAlphaBase * 0.55,
+        mirror: false,
+        sparkleBoost: 1.5
       };
-    } else {
-      state.wristRight = null;
     }
 
-    if (leftWrist) {
-      state.leftHandYNorm = clamp(leftWrist.y / video.videoHeight, 0, 1);
-      state.wristLeft = {
-        x: mapRange(leftWrist.x, 0, video.videoWidth, W, 0),
-        y: mapRange(leftWrist.y, 0, video.videoHeight, 0, H)
+    if (mode === "TWIN") {
+      return {
+        eraseBoost: 1.05,
+        returnAlpha: CONFIG.fogReturnAlphaBase * 0.9,
+        mirror: true,
+        sparkleBoost: 1.0
       };
-    } else {
-      state.wristLeft = null;
-      state.leftHandYNorm = 0.5;
     }
 
-    state.rawTargetX = mapRange(primaryX, 0, video.videoWidth, W, 0);
-    state.rawTargetY = mapRange(primaryY, 0, video.videoHeight, 0, H);
-
-    const dx = state.rawTargetX - state.prevRawTargetX;
-    const dy = state.rawTargetY - state.prevRawTargetY;
-    state.velocityMag = lerp(state.velocityMag, Math.sqrt(dx * dx + dy * dy), 0.22);
-    state.prevRawTargetX = state.rawTargetX;
-    state.prevRawTargetY = state.rawTargetY;
-
-    let spread = 0.22;
-    let handsWide = false;
-    let handsUp = false;
-
-    if (leftWrist && rightWrist) {
-      const handDistance = dist(leftWrist, rightWrist);
-      spread = mapRange(
-        handDistance,
-        CONFIG.minHandDistance,
-        CONFIG.maxHandDistance,
-        0.08,
-        1.0
-      );
-      handsWide = handDistance > CONFIG.bigGestureThreshold * 1.6;
-
-      const avgWristY = (leftWrist.y + rightWrist.y) * 0.5;
-      const avgShoulderY = (leftShoulder.y + rightShoulder.y) * 0.5;
-      handsUp = avgWristY < avgShoulderY - 18;
+    if (mode === "SPACE") {
+      return {
+        eraseBoost: 0.92,
+        returnAlpha: CONFIG.fogReturnAlphaBase * 0.45,
+        mirror: false,
+        sparkleBoost: 0.8
+      };
     }
 
-    const leftHandRaised = 1 - state.leftHandYNorm;
-    const horizontalReach = Math.abs(state.rightHandXNorm - 0.5) * 2;
-    const bigGesture = state.velocityMag > CONFIG.bigGestureThreshold;
-
-    const energy =
-      0.07 +
-      leftHandRaised * 0.36 +
-      spread * 0.22 +
-      horizontalReach * 0.16 +
-      clamp(state.velocityMag / 220, 0, 0.32);
-
-    state.rawEnergy = clamp(energy, CONFIG.defaultEnergy, 1);
-    state.rawSpread = clamp(spread, 0.08, 1.0);
-    state.handsWide = handsWide;
-    state.handsUp = handsUp;
-    state.bigGesture = bigGesture;
-
-    const stillAmt = clamp(1 - state.velocityMag / CONFIG.idleStillnessThreshold, 0, 1);
-    state.stillness = lerp(state.stillness, stillAmt, 0.08);
-
-    if (nose && rightWrist) {
-      const wristToNose = dist(rightWrist, nose);
-      if (
-        wristToNose < 65 &&
-        state.rawEnergy > 0.55 &&
-        nowMs() - lastBurstAt > CONFIG.burstCooldownMs
-      ) {
-        state.burstRequested = true;
-        lastBurstAt = nowMs();
-      }
-    }
-
-    state.activePose = true;
-    state.lastPoseSeenAt = nowMs();
-    return true;
+    return {
+      eraseBoost: 1.0,
+      returnAlpha: CONFIG.fogReturnAlphaBase,
+      mirror: false,
+      sparkleBoost: 1.0
+    };
   }
 
   // =========================================================
-  // MOTION FALLBACK FOR MAIN CONTROL
+  // MOTION DETECTION + WIPE
   // =========================================================
-  function updateMotionFallback() {
+  function updateMotionAndWipe() {
     if (!video.videoWidth || !video.videoHeight) return;
 
-    motionCtx.save();
-    motionCtx.scale(-1, 1);
-    motionCtx.drawImage(video, -motionCanvas.width, 0, motionCanvas.width, motionCanvas.height);
-    motionCtx.restore();
+    const params = modeParams();
 
-    const frame = motionCtx.getImageData(0, 0, motionCanvas.width, motionCanvas.height);
+    diffCtx.save();
+    diffCtx.scale(-1, 1);
+    diffCtx.drawImage(video, -diffCanvas.width, 0, diffCanvas.width, diffCanvas.height);
+    diffCtx.restore();
+
+    const frame = diffCtx.getImageData(0, 0, diffCanvas.width, diffCanvas.height);
     const data = frame.data;
 
-    if (!prevMotionFrame) {
-      prevMotionFrame = new Uint8ClampedArray(data);
+    if (!prevFrame) {
+      prevFrame = new Uint8ClampedArray(data);
       return;
     }
 
     let active = 0;
-    let sumX = 0;
-    let sumY = 0;
+    let energyAccum = 0;
 
-    for (let y = 0; y < motionCanvas.height; y += CONFIG.opticalFallbackStep) {
-      for (let x = 0; x < motionCanvas.width; x += CONFIG.opticalFallbackStep) {
-        const i = (y * motionCanvas.width + x) * 4;
+    // fog slowly comes back
+    fogCtx.save();
+    fogCtx.globalCompositeOperation = "source-over";
+    fogCtx.fillStyle = `rgba(255,255,255,${params.returnAlpha})`;
+    fogCtx.fillRect(0, 0, W, H);
+    fogCtx.restore();
 
-        const dr = Math.abs(data[i] - prevMotionFrame[i]);
-        const dg = Math.abs(data[i + 1] - prevMotionFrame[i + 1]);
-        const db = Math.abs(data[i + 2] - prevMotionFrame[i + 2]);
+    for (let y = 0; y < diffCanvas.height; y += CONFIG.diffStep) {
+      for (let x = 0; x < diffCanvas.width; x += CONFIG.diffStep) {
+        const i = (y * diffCanvas.width + x) * 4;
 
+        const dr = Math.abs(data[i] - prevFrame[i]);
+        const dg = Math.abs(data[i + 1] - prevFrame[i + 1]);
+        const db = Math.abs(data[i + 2] - prevFrame[i + 2]);
         const diff = dr + dg + db;
 
-        if (diff > CONFIG.opticalFallbackThreshold) {
+        if (diff > CONFIG.diffThreshold) {
           active++;
-          sumX += x;
-          sumY += y;
-        }
-      }
-    }
+          energyAccum += diff;
 
-    prevMotionFrame.set(data);
+          const screenX = mapRange(x, 0, diffCanvas.width, 0, W);
+          const screenY = mapRange(y, 0, diffCanvas.height, 0, H);
+          const strength = clamp(mapRange(diff, CONFIG.diffThreshold, 180, 0.25, 1.0), 0.25, 1.0);
+          const radius = (CONFIG.eraseRadiusBase + strength * (CONFIG.eraseRadiusMax - CONFIG.eraseRadiusBase)) * params.eraseBoost;
 
-    if (active >= CONFIG.opticalFallbackMinActive) {
-      const mx = sumX / active;
-      const my = sumY / active;
+          // wipe away fog
+          fogCtx.save();
+          fogCtx.globalCompositeOperation = "destination-out";
+          fogCtx.beginPath();
+          fogCtx.arc(screenX, screenY, radius, 0, Math.PI * 2);
+          fogCtx.fillStyle = `rgba(0,0,0,${CONFIG.eraseStrength})`;
+          fogCtx.fill();
+          fogCtx.restore();
 
-      state.rawTargetX = mapRange(mx, 0, motionCanvas.width, 0, W);
-      state.rawTargetY = mapRange(my, 0, motionCanvas.height, 0, H);
-      state.rawEnergy = clamp(active / 320, 0.08, 0.85);
-      state.rawSpread = clamp(active / 480, 0.12, 0.9);
-      state.velocityMag = lerp(state.velocityMag, active * 1.8, 0.15);
-      state.bigGesture = active > 140;
-      state.handsWide = false;
-      state.handsUp = false;
-      state.stillness = lerp(state.stillness, active < 65 ? 0.8 : 0.15, 0.06);
+          // soft edge color glow
+          fogCtx.save();
+          fogCtx.globalCompositeOperation = "source-over";
+          const glow = fogCtx.createRadialGradient(screenX, screenY, 0, screenX, screenY, radius * 1.45);
+          const c1 = pick(BXCM_COLORS);
+          glow.addColorStop(0, `${hexToRGBA(c1, 0.055)}`);
+          glow.addColorStop(1, "rgba(255,255,255,0)");
+          fogCtx.fillStyle = glow;
+          fogCtx.beginPath();
+          fogCtx.arc(screenX, screenY, radius * 1.45, 0, Math.PI * 2);
+          fogCtx.fill();
+          fogCtx.restore();
 
-      if (state.rawEnergy > 0.7 && nowMs() - lastBurstAt > CONFIG.burstCooldownMs) {
-        state.burstRequested = true;
-        lastBurstAt = nowMs();
-      }
-    } else {
-      state.rawEnergy = lerp(state.rawEnergy, 0.08, 0.08);
-      state.rawSpread = lerp(state.rawSpread, 0.2, 0.08);
-      state.velocityMag = lerp(state.velocityMag, 0, 0.06);
-      state.bigGesture = false;
-      state.handsWide = false;
-      state.handsUp = false;
-      state.stillness = lerp(state.stillness, 1, 0.04);
-    }
-  }
+          spawnSparkle(screenX, screenY, strength * params.sparkleBoost);
 
-  // =========================================================
-  // CROWD SILHOUETTES
-  // =========================================================
-  function updateCrowdSilhouettes() {
-    if (!video.videoWidth || !video.videoHeight) return;
-    if (frameCount % CONFIG.silhouetteUpdateEvery !== 0) return;
+          // mirrored wipe in Twin mode
+          if (params.mirror) {
+            const mx = W - screenX;
 
-    silhouetteCtx.save();
-    silhouetteCtx.scale(-1, 1);
-    silhouetteCtx.drawImage(
-      video,
-      -silhouetteCanvas.width,
-      0,
-      silhouetteCanvas.width,
-      silhouetteCanvas.height
-    );
-    silhouetteCtx.restore();
-
-    const frame = silhouetteCtx.getImageData(0, 0, silhouetteCanvas.width, silhouetteCanvas.height);
-    const data = frame.data;
-
-    if (!prevSilhouetteFrame) {
-      prevSilhouetteFrame = new Uint8ClampedArray(data);
-      return;
-    }
-
-    const mask = silhouetteMaskCtx.createImageData(silhouetteCanvas.width, silhouetteCanvas.height);
-    const m = mask.data;
-
-    for (let y = 0; y < silhouetteCanvas.height; y += CONFIG.silhouetteStep) {
-      for (let x = 0; x < silhouetteCanvas.width; x += CONFIG.silhouetteStep) {
-        const i = (y * silhouetteCanvas.width + x) * 4;
-
-        const dr = Math.abs(data[i] - prevSilhouetteFrame[i]);
-        const dg = Math.abs(data[i + 1] - prevSilhouetteFrame[i + 1]);
-        const db = Math.abs(data[i + 2] - prevSilhouetteFrame[i + 2]);
-        const diff = dr + dg + db;
-
-        const isBodyish = diff > CONFIG.silhouetteThreshold;
-
-        if (isBodyish) {
-          const tintMix = (x / silhouetteCanvas.width);
-          const r = lerp(0, 255, tintMix * 0.65);
-          const g = lerp(184, 0, tintMix * 0.35);
-          const b = lerp(255, 140, tintMix * 0.55);
-          const a = 255;
-
-          for (let yy = 0; yy < CONFIG.silhouetteStep; yy++) {
-            for (let xx = 0; xx < CONFIG.silhouetteStep; xx++) {
-              const px = x + xx;
-              const py = y + yy;
-              if (px >= silhouetteCanvas.width || py >= silhouetteCanvas.height) continue;
-              const ii = (py * silhouetteCanvas.width + px) * 4;
-              m[ii] = r;
-              m[ii + 1] = g;
-              m[ii + 2] = b;
-              m[ii + 3] = a;
-            }
+            fogCtx.save();
+            fogCtx.globalCompositeOperation = "destination-out";
+            fogCtx.beginPath();
+            fogCtx.arc(mx, screenY, radius * 0.95, 0, Math.PI * 2);
+            fogCtx.fillStyle = `rgba(0,0,0,${CONFIG.eraseStrength})`;
+            fogCtx.fill();
+            fogCtx.restore();
           }
         }
       }
     }
 
-    prevSilhouetteFrame.set(data);
+    prevFrame.set(data);
 
-    silhouetteMaskCtx.putImageData(mask, 0, 0);
+    const energyNorm = active > 0
+      ? clamp(mapRange(energyAccum / Math.max(active, 1), CONFIG.diffThreshold, 180, 0.1, 1.0), 0, 1)
+      : 0;
+
+    state.motionEnergy = lerp(state.motionEnergy, energyNorm, 0.14);
   }
 
-  function drawCrowdSilhouettes(t) {
-    silhouetteLargeCtx.clearRect(0, 0, W, H);
-    silhouetteLargeCtx.save();
-    silhouetteLargeCtx.filter = `blur(${CONFIG.silhouetteBlur}px)`;
-    silhouetteLargeCtx.globalAlpha = CONFIG.silhouetteAlpha;
-    silhouetteLargeCtx.drawImage(silhouetteMaskCanvas, 0, 0, W, H);
-    silhouetteLargeCtx.restore();
-
-    const pulse = 0.85 + Math.sin(t * 0.002) * 0.15;
-
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.globalAlpha = CONFIG.silhouetteAlpha * pulse;
-    ctx.drawImage(silhouetteLargeCanvas, 0, 0);
-
-    ctx.globalAlpha = CONFIG.silhouetteGlowAlpha;
-    ctx.drawImage(silhouetteLargeCanvas, 0, 0);
-    ctx.restore();
+  function hexToRGBA(hex, alpha) {
+    const h = hex.replace("#", "");
+    const bigint = parseInt(h, 16);
+    const r = (bigint >> 16) & 255;
+    const g = (bigint >> 8) & 255;
+    const b = bigint & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
   }
 
   // =========================================================
-  // VISUAL HELPERS
+  // REVEAL ESTIMATION
   // =========================================================
-  function drawBackgroundGlow(t) {
-    const pulse = 0.5 + Math.sin(t * 0.001) * 0.5;
-    let hue = 195;
-    let alpha = 0.07;
+  function updateRevealRatio() {
+    revealSampleCtx.clearRect(0, 0, revealSampleCanvas.width, revealSampleCanvas.height);
+    revealSampleCtx.drawImage(fogCanvas, 0, 0, revealSampleCanvas.width, revealSampleCanvas.height);
 
-    if (state.currentMode === "CALM") {
-      hue = 195;
-      alpha = 0.065;
-    } else if (state.currentMode === "CHAOS") {
-      hue = 22;
-      alpha = 0.08;
-    } else if (state.currentMode === "MIRROR") {
-      hue = 305;
-      alpha = 0.07;
-    } else if (state.currentMode === "GALAXY") {
-      hue = 232 + Math.sin(t * 0.0005) * 18;
-      alpha = 0.08;
+    const img = revealSampleCtx.getImageData(0, 0, revealSampleCanvas.width, revealSampleCanvas.height);
+    const d = img.data;
+
+    let visibleCount = 0;
+    const total = revealSampleCanvas.width * revealSampleCanvas.height;
+
+    for (let i = 3; i < d.length; i += 4) {
+      const alpha = d[i] / 255;
+      if (alpha < 0.55) visibleCount++;
     }
 
-    const grad = ctx.createRadialGradient(
-      state.targetX, state.targetY, 0,
-      state.targetX, state.targetY, Math.max(W, H) * 0.42
-    );
-    grad.addColorStop(0, `hsla(${hue}, 100%, 62%, ${alpha + pulse * 0.03})`);
-    grad.addColorStop(0.42, `hsla(${hue}, 100%, 58%, ${alpha * 0.35})`);
-    grad.addColorStop(1, "rgba(255,255,255,0)");
+    state.revealRatio = visibleCount / total;
+  }
 
-    ctx.save();
-    ctx.globalCompositeOperation = "multiply";
-    ctx.fillStyle = grad;
+  // =========================================================
+  // DRAW LAYERS
+  // =========================================================
+  function drawBackground() {
+    ctx.fillStyle = "#f8fbff";
     ctx.fillRect(0, 0, W, H);
+  }
+
+  function drawLogo() {
+    ctx.drawImage(logoCanvas, 0, 0);
+
+    const reveal = state.revealRatio;
+    if (reveal > 0.35) {
+      ctx.save();
+      ctx.globalAlpha = clamp(reveal * 0.25, 0, 0.22);
+
+      const g = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, Math.max(W, H) * 0.35);
+      g.addColorStop(0, "rgba(31,165,220,0.22)");
+      g.addColorStop(0.45, "rgba(161,44,146,0.14)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+  }
+
+  function drawFog() {
+    ctx.drawImage(fogCanvas, 0, 0);
+  }
+
+  function drawCelebration() {
+    if (!celebrationOn) return;
+
+    const t = (performance.now() - lastCelebrationAt) / 1000;
+    const alpha = clamp(1 - t / 1.2, 0, 1);
+
+    if (alpha <= 0) {
+      celebrationOn = false;
+      return;
+    }
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = "center";
+    ctx.font = "bold 48px Arial";
+    ctx.fillStyle = "#0f2a44";
+    ctx.fillText("You revealed BxCM!", W / 2, H * 0.16);
     ctx.restore();
   }
 
-  function drawGalaxyStars(t) {
-    if (state.currentMode !== "GALAXY") return;
+  function maybeCelebrate() {
+    if (state.revealRatio > 0.62 && !celebrationOn) {
+      celebrationOn = true;
+      lastCelebrationAt = performance.now();
+      playCelebrateSound();
 
-    ctx.save();
-    const starCount = 36;
-    for (let i = 0; i < starCount; i++) {
-      const a = i / starCount * Math.PI * 2 + t * 0.00015;
-      const r = 80 + (i % 8) * 28 + Math.sin(t * 0.001 + i) * 12;
-      const x = state.targetX + Math.cos(a) * r;
-      const y = state.targetY + Math.sin(a) * r;
-      const size = 1.2 + (i % 3);
-      ctx.fillStyle = `rgba(30,50,90,${0.14 + (i % 4) * 0.05})`;
-      ctx.beginPath();
-      ctx.arc(x, y, size, 0, Math.PI * 2);
-      ctx.fill();
+      for (let i = 0; i < 80; i++) {
+        spawnSparkle(rand(W * 0.25, W * 0.75), rand(H * 0.25, H * 0.7), rand(0.8, 1.6));
+      }
     }
-    ctx.restore();
   }
 
   function drawDebugHUD() {
     if (!debugOn) return;
 
     ctx.save();
-
-    if (state.wristLeft) {
-      ctx.strokeStyle = "rgba(0,145,255,0.8)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(state.wristLeft.x, state.wristLeft.y, 10, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    if (state.wristRight) {
-      ctx.strokeStyle = "rgba(255,0,140,0.8)";
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.arc(state.wristRight.x, state.wristRight.y, 10, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-
-    if (state.shoulderCenter) {
-      ctx.fillStyle = "rgba(17,50,79,0.85)";
-      ctx.beginPath();
-      ctx.arc(state.shoulderCenter.x, state.shoulderCenter.y, 5, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.strokeStyle = "rgba(17,50,79,0.25)";
-    ctx.beginPath();
-    ctx.arc(state.targetX, state.targetY, 18 + state.spread * 20, 0, Math.PI * 2);
-    ctx.stroke();
-
     ctx.fillStyle = "rgba(17,50,79,0.95)";
     ctx.font = "14px Arial";
-    ctx.fillText(`Energy: ${state.energy.toFixed(2)}`, 20, 64);
-    ctx.fillText(`Spread: ${state.spread.toFixed(2)}`, 20, 84);
-    ctx.fillText(`Velocity: ${state.velocityMag.toFixed(1)}`, 20, 104);
-    ctx.fillText(`Pose: ${state.activePose ? "ON" : "FALLBACK"}`, 20, 124);
-    ctx.fillText(`Mode: ${displayModeName(state.currentMode)}`, 20, 144);
-    ctx.fillText(`Hands Up: ${state.handsUp}`, 20, 164);
-    ctx.fillText(`Hands Wide: ${state.handsWide}`, 20, 184);
-
+    ctx.fillText(`Motion Energy: ${state.motionEnergy.toFixed(2)}`, 20, 68);
+    ctx.fillText(`Reveal: ${(state.revealRatio * 100).toFixed(1)}%`, 20, 88);
+    ctx.fillText(`Mode: ${state.mode === "AUTO" ? `AUTO · ${state.autoModeResolved}` : state.mode}`, 20, 108);
     ctx.restore();
   }
 
-  function updateInstructionOverlay(t) {
-    const elapsed = nowMs() - experienceStartedAt;
-    let opacity = 1;
-
-    if (elapsed > CONFIG.instructionFadeAfterMs) {
-      opacity = 0;
-    } else if (elapsed > CONFIG.instructionFadeAfterMs - 2000) {
-      opacity = mapRange(
-        elapsed,
-        CONFIG.instructionFadeAfterMs - 2000,
-        CONFIG.instructionFadeAfterMs,
-        1,
-        0
-      );
-    }
-
-    const pulse = 0.97 + Math.sin(t * CONFIG.instructionPulseSpeed) * 0.03;
-    instructionOverlay.style.opacity = String(opacity);
-    instructionInner.style.transform = `scale(${pulse})`;
-  }
-
-  function enterFullscreenIfPossible() {
-    const el = document.documentElement;
-    if (document.fullscreenElement) return;
-
-    const fn =
-      el.requestFullscreen ||
-      el.webkitRequestFullscreen ||
-      el.msRequestFullscreen;
-
-    if (fn) {
-      try {
-        fn.call(el);
-      } catch (err) {
-        console.warn("Fullscreen request failed:", err);
-      }
-    }
-  }
-
-  function hideUIForKiosk() {
-    if (!ui) return;
-    kioskMode = true;
-    ui.style.transition = "opacity 0.7s ease";
-    ui.style.opacity = "0";
-    ui.style.pointerEvents = "none";
-  }
-
-  function showUI() {
-    if (!ui) return;
-    ui.style.opacity = "1";
-    ui.style.pointerEvents = "auto";
-  }
-
-  function scheduleKioskHide() {
-    if (uiHideTimeout) clearTimeout(uiHideTimeout);
-    uiHideTimeout = setTimeout(() => {
-      hideUIForKiosk();
-    }, CONFIG.kioskHideDelayMs);
-  }
-
   // =========================================================
-  // ANIMATE
+  // MAIN LOOP
   // =========================================================
-  async function animate(t) {
+  function animate() {
     if (!started) return;
 
     frameCount++;
-    const dt = Math.min(0.033, (t - lastTime) / 1000);
-    lastTime = t;
 
-    const poseWorked = await updatePoseInput();
-    if (!poseWorked) {
-      updateMotionFallback();
+    updateMotionAndWipe();
+
+    if (frameCount % CONFIG.revealCheckEvery === 0) {
+      updateRevealRatio();
+      maybeCelebrate();
+      updateModeBadge();
     }
 
-    updateCrowdSilhouettes();
-
-    state.targetX = lerp(state.targetX, state.rawTargetX, CONFIG.poseSmoothing);
-    state.targetY = lerp(state.targetY, state.rawTargetY, CONFIG.poseSmoothing);
-    state.energy = lerp(state.energy, state.rawEnergy, CONFIG.energySmoothing);
-    state.spread = lerp(state.spread, state.rawSpread, CONFIG.spreadSmoothing);
-    state.galaxySpin += state.currentMode === "GALAXY" ? 0.01 : 0.002;
-
-    updateModeLogic();
     updateAudio();
 
-    ctx.fillStyle = `rgba(255,255,255,${CONFIG.backgroundFade})`;
-    ctx.fillRect(0, 0, W, H);
-
-    drawBackgroundGlow(t);
-    drawCrowdSilhouettes(t);
-    drawGalaxyStars(t);
-
-    ctx.globalCompositeOperation = "multiply";
-
-    for (let i = 0; i < particles.length; i++) {
-      particles[i].update(dt, t);
-      particles[i].draw(t);
-    }
-
-    if (state.burstRequested) {
-      burstAt(state.targetX, state.targetY);
-      playBurstSound();
-      state.burstRequested = false;
-    }
-
-    ctx.globalCompositeOperation = "source-over";
-
-    updateInstructionOverlay(t);
+    drawBackground();
+    drawLogo();
+    updateAndDrawSparkles();
+    drawFog();
+    drawCelebration();
     drawDebugHUD();
+
+    fadeIntroIfNeeded(performance.now());
 
     animationId = requestAnimationFrame(animate);
   }
 
   // =========================================================
-  // START
+  // START / RESET
   // =========================================================
   async function startExperience() {
     if (started) return;
@@ -1285,17 +863,14 @@
 
     try {
       await resumeAudio();
-      await startCamera(selectedDeviceId || (cameraSelect ? cameraSelect.value : undefined) || undefined);
-      await initDetector();
+      await startCamera(selectedDeviceId || (cameraSelect ? cameraSelect.value : undefined));
 
-      ctx.fillStyle = "rgba(255,255,255,1)";
-      ctx.fillRect(0, 0, W, H);
+      buildFog(true);
+      renderLogoLayer();
 
       started = true;
-      experienceStartedAt = nowMs();
-      lastTime = performance.now();
-
-      scheduleKioskHide();
+      experienceStartedAt = performance.now();
+      scheduleUIHide();
       animationId = requestAnimationFrame(animate);
 
       if (startBtn) {
@@ -1307,8 +882,17 @@
         startBtn.disabled = false;
         startBtn.textContent = "Start";
       }
-      alert("Could not start camera/pose detection. Check camera permissions and reload.");
+      alert("Could not start the camera. Check permissions and reload.");
     }
+  }
+
+  function resetExperience() {
+    buildFog(true);
+    renderLogoLayer();
+    sparkles.length = 0;
+    state.revealRatio = 0;
+    state.motionEnergy = 0;
+    celebrationOn = false;
   }
 
   // =========================================================
@@ -1318,31 +902,40 @@
     startBtn.addEventListener("click", async () => {
       firstGestureActivated = true;
       await resumeAudio();
-      enterFullscreenIfPossible();
       await startExperience();
     });
   }
 
   if (burstBtn) {
-    burstBtn.addEventListener("click", async () => {
-      await resumeAudio();
-      state.burstRequested = true;
-      scheduleKioskHide();
+    burstBtn.addEventListener("click", () => {
+      // manual “burst” = punch a hole in the fog at center
+      const radius = 120;
+      fogCtx.save();
+      fogCtx.globalCompositeOperation = "destination-out";
+      fogCtx.beginPath();
+      fogCtx.arc(W / 2, H / 2, radius, 0, Math.PI * 2);
+      fogCtx.fillStyle = "rgba(0,0,0,1)";
+      fogCtx.fill();
+      fogCtx.restore();
+
+      for (let i = 0; i < 30; i++) {
+        spawnSparkle(W / 2, H / 2, 1.4);
+      }
     });
   }
 
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
-      resetParticles();
-      scheduleKioskHide();
+      resetExperience();
+      scheduleUIHide();
     });
   }
 
   if (debugBtn) {
     debugBtn.addEventListener("click", () => {
       debugOn = !debugOn;
-      updateDebugUI();
-      if (!debugOn && kioskMode) hideUIForKiosk();
+      video.style.opacity = debugOn ? "0.18" : "0";
+      if (debugBtn) debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
     });
   }
 
@@ -1353,7 +946,7 @@
         try {
           await startCamera(selectedDeviceId);
         } catch (err) {
-          console.error("Camera switch failed:", err);
+          console.error(err);
         }
       }
     });
@@ -1361,15 +954,9 @@
 
   if (modeSelect) {
     modeSelect.addEventListener("change", () => {
-      state.lockedMode = modeSelect.value;
-
-      if (state.lockedMode === "AUTO") {
-        updateModeLogic();
-      } else {
-        setMode(state.lockedMode);
-      }
-
-      scheduleKioskHide();
+      state.mode = modeSelect.value;
+      updateModeBadge();
+      scheduleUIHide();
     });
   }
 
@@ -1383,29 +970,16 @@
     });
   }
 
-  window.addEventListener("keydown", async (e) => {
+  window.addEventListener("keydown", (e) => {
     const key = e.key.toLowerCase();
 
-    if (key === "b") {
-      await resumeAudio();
-      state.burstRequested = true;
-    }
+    if (key === "r") resetExperience();
+    if (key === "u") showUI();
+    if (key === "h") hideUIForKiosk();
     if (key === "d") {
       debugOn = !debugOn;
-      updateDebugUI();
-    }
-    if (key === "r") {
-      resetParticles();
-    }
-    if (key === "f") {
-      enterFullscreenIfPossible();
-    }
-    if (key === "u") {
-      showUI();
-      kioskMode = false;
-    }
-    if (key === "h") {
-      hideUIForKiosk();
+      video.style.opacity = debugOn ? "0.18" : "0";
+      if (debugBtn) debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
     }
   });
 
@@ -1413,10 +987,7 @@
     if (!firstGestureActivated) {
       firstGestureActivated = true;
       await resumeAudio();
-      enterFullscreenIfPossible();
-      if (!started) {
-        await startExperience();
-      }
+      if (!started) await startExperience();
     } else {
       await resumeAudio();
     }
@@ -1427,10 +998,10 @@
   // =========================================================
   async function init() {
     try {
-      const temp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      temp.getTracks().forEach(t => t.stop());
+      const warmup = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      warmup.getTracks().forEach(t => t.stop());
     } catch (err) {
-      console.warn("Initial permission warmup skipped:", err);
+      console.warn("Warmup skipped:", err);
     }
 
     try {
@@ -1441,14 +1012,17 @@
 
     if (modeSelect) {
       modeSelect.value = "AUTO";
+      state.mode = "AUTO";
+      updateModeBadge();
     }
 
     try {
       initAudio();
     } catch (err) {
-      console.warn("Audio init skipped:", err);
+      console.warn(err);
     }
 
+    // light auto-start attempt
     setTimeout(async () => {
       if (!started) {
         try {
