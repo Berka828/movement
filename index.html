@@ -3,44 +3,45 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>BxCM Move the Energy</title>
-
+  <title>BxCM Reveal the Logo</title>
   <link rel="stylesheet" href="style.css" />
-
-  <!-- TensorFlow -->
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 </head>
 <body>
-
-  <!-- STAFF UI (auto hides in kiosk mode) -->
   <div id="ui">
     <div class="topbar">
-
-      <div class="brand">
-        BxCM Move the Energy
-      </div>
+      <div class="brand">BxCM Reveal Experience</div>
 
       <div class="controls">
-
         <label>Camera</label>
         <select id="cameraSelect"></select>
+
+        <label>Reveal</label>
+        <select id="revealTypeSelect">
+          <option value="logo">Logo</option>
+          <option value="image">Image</option>
+          <option value="video">Video</option>
+        </select>
+
+        <label>Fog</label>
+        <select id="fogStyleSelect">
+          <option value="smoke">Smoke</option>
+          <option value="dust">Dust</option>
+          <option value="frosted">Frosted</option>
+        </select>
 
         <label>Mode</label>
         <select id="modeSelect">
           <option value="AUTO">Auto</option>
-          <option value="CALM">Glow</option>
-          <option value="CHAOS">Storm</option>
-          <option value="MIRROR">Twin</option>
-          <option value="GALAXY">Space</option>
+          <option value="GLOW">Glow</option>
+          <option value="STORM">Storm</option>
+          <option value="TWIN">Twin</option>
+          <option value="SPACE">Space</option>
         </select>
 
         <button id="startBtn">Start</button>
-        <button id="burstBtn">Burst</button>
         <button id="resetBtn">Reset</button>
         <button id="soundBtn">Sound: Off</button>
         <button id="debugBtn">Debug: Off</button>
-
       </div>
     </div>
 
@@ -49,14 +50,9 @@
     </div>
   </div>
 
-  <!-- Hidden camera feed -->
   <video id="video" playsinline muted autoplay></video>
-
-  <!-- Main visual -->
   <canvas id="canvas"></canvas>
 
-  <!-- App -->
   <script src="app.js"></script>
-
 </body>
 </html>
