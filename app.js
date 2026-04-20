@@ -8,6 +8,7 @@
   const ctx = canvas.getContext("2d");
   const video = document.getElementById("video");
 
+  const ui = document.getElementById("ui");
   const cameraSelect = document.getElementById("cameraSelect");
   const startBtn = document.getElementById("startBtn");
   const burstBtn = document.getElementById("burstBtn");
@@ -18,31 +19,37 @@
   // CONFIG
   // =========================================================
   const CONFIG = {
-    particleCount: 1600,
-    backgroundFade: 0.09,
-    drag: 0.962,
-    baseLineWidth: 1.1,
-    maxSpeedBase: 4.5,
+    particleCount: 1800,
+    backgroundFade: 0.085,
+    dragBase: 0.965,
+    baseLineWidth: 1.0,
+    maxSpeedBase: 4.2,
     targetPullBase: 0.010,
-    swirlBase: 0.012,
+    swirlBase: 0.014,
     noiseScaleBase: 0.006,
-    noiseStrengthBase: 0.55,
+    noiseStrengthBase: 0.40,
     spreadBase: 90,
-    burstCount: 220,
-    burstForce: 4.8,
-    poseSmoothing: 0.18,
-    energySmoothing: 0.12,
+    burstCount: 280,
+    burstForce: 6.2,
+    poseSmoothing: 0.16,
+    energySmoothing: 0.10,
     spreadSmoothing: 0.12,
     shoulderConfidence: 0.25,
-    wristConfidence: 0.2,
+    wristConfidence: 0.20,
     defaultEnergy: 0.08,
     minHandDistance: 40,
-    maxHandDistance: 350,
-    minCanvasDimInfluence: 0.3,
+    maxHandDistance: 380,
     opticalFallbackThreshold: 32,
     opticalFallbackStep: 10,
     opticalFallbackMinActive: 55,
-    debugVideoOpacity: 0.22
+    debugVideoOpacity: 0.18,
+    stateHoldMs: 1200,
+    burstCooldownMs: 900,
+    idleStillnessThreshold: 14,
+    bigGestureThreshold: 150,
+    kioskHideDelayMs: 5000,
+    instructionFadeAfterMs: 9000,
+    instructionPulseSpeed: 0.002
   };
 
   // =========================================================
@@ -60,12 +67,20 @@
   let debugOn = false;
   let selectedDeviceId = null;
   let lastTime = performance.now();
+  let lastBurstAt = 0;
+  let kioskMode = false;
+  let uiHideTimeout = null;
+  let experienceStartedAt = 0;
+  let firstGestureActivated = false;
 
   const state = {
     targetX: W * 0.5,
     targetY: H * 0.5,
     rawTargetX: W * 0.5,
     rawTargetY: H * 0.5,
+    prevRawTargetX: W * 0.5,
+    prevRawTargetY: W * 0.5,
+    velocityMag: 0,
     energy: 0.1,
     rawEnergy: 0.1,
     spread: 0.25,
@@ -77,16 +92,25 @@
     burstRequested: false,
     wristLeft: null,
     wristRight: null,
-    shoulderCenter: null
+    shoulderCenter: null,
+    handsUp: false,
+    handsWide: false,
+    bigGesture: false,
+    stillness: 0,
+    currentMode: "CALM",
+    modeSince: performance.now(),
+    mirrorActive: false,
+    galaxySpin: 0,
+    lastPoseSeenAt: 0
   };
 
-  // fallback motion tracking buffers
+  // motion fallback
   let prevFrame = null;
   const motionCanvas = document.createElement("canvas");
   const motionCtx = motionCanvas.getContext("2d", { willReadFrequently: true });
 
   // =========================================================
-  // UTILS
+  // UTIL
   // =========================================================
   function clamp(v, min, max) {
     return Math.max(min, Math.min(max, v));
@@ -105,6 +129,10 @@
     const dx = a.x - b.x;
     const dy = a.y - b.y;
     return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  function nowMs() {
+    return performance.now();
   }
 
   function resize() {
@@ -126,19 +154,203 @@
   resize();
 
   // =========================================================
-  // VIDEO DEBUG STYLE
+  // EXTRA OVERLAYS
+  // =========================================================
+  const instructionOverlay = document.createElement("div");
+  instructionOverlay.id = "instructionOverlay";
+  instructionOverlay.innerHTML = `
+    <div id="instructionInner">
+      <div class="line big">STEP IN</div>
+      <div class="line">MOVE YOUR RIGHT HAND TO STEER</div>
+      <div class="line">RAISE YOUR LEFT HAND TO ADD ENERGY</div>
+      <div class="line">HANDS WIDE = MIRROR MODE</div>
+      <div class="line">PUSH FAST FOR A BURST</div>
+    </div>
+  `;
+  document.body.appendChild(instructionOverlay);
+
+  Object.assign(instructionOverlay.style, {
+    position: "fixed",
+    inset: "0",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    pointerEvents: "none",
+    zIndex: "30",
+    transition: "opacity 0.8s ease",
+    opacity: "1"
+  });
+
+  const instructionInner = instructionOverlay.querySelector("#instructionInner");
+  Object.assign(instructionInner.style, {
+    color: "white",
+    textAlign: "center",
+    fontFamily: "Arial, sans-serif",
+    textShadow: "0 0 12px rgba(0,0,0,0.6), 0 0 28px rgba(0,120,255,0.35)",
+    letterSpacing: "1px",
+    maxWidth: "900px",
+    padding: "24px"
+  });
+
+  Array.from(instructionInner.querySelectorAll(".line")).forEach((line, index) => {
+    Object.assign(line.style, {
+      margin: index === 0 ? "0 0 18px 0" : "10px 0",
+      fontSize: index === 0 ? "42px" : "22px",
+      fontWeight: index === 0 ? "700" : "500"
+    });
+  });
+
+  const modeBadge = document.createElement("div");
+  modeBadge.id = "modeBadge";
+  modeBadge.textContent = "MODE: CALM";
+  document.body.appendChild(modeBadge);
+
+  Object.assign(modeBadge.style, {
+    position: "fixed",
+    left: "20px",
+    top: "20px",
+    zIndex: "25",
+    color: "white",
+    fontFamily: "Arial, sans-serif",
+    fontSize: "16px",
+    letterSpacing: "1px",
+    padding: "10px 14px",
+    borderRadius: "999px",
+    background: "rgba(0,0,0,0.35)",
+    backdropFilter: "blur(4px)",
+    opacity: "0.95",
+    transition: "opacity 0.5s ease"
+  });
+
+  // =========================================================
+  // VIDEO STYLE
   // =========================================================
   function updateDebugUI() {
     video.style.opacity = debugOn ? String(CONFIG.debugVideoOpacity) : "0";
     video.style.pointerEvents = "none";
     video.style.transform = "scaleX(-1)";
-    debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
+    video.style.position = "fixed";
+    video.style.right = "20px";
+    video.style.bottom = "20px";
+    video.style.width = "220px";
+    video.style.height = "165px";
+    video.style.objectFit = "cover";
+    video.style.borderRadius = "14px";
+    video.style.zIndex = "22";
+    video.style.boxShadow = "0 0 20px rgba(0,0,0,0.3)";
+    if (debugBtn) {
+      debugBtn.textContent = debugOn ? "Debug: On" : "Debug: Off";
+    }
   }
 
   updateDebugUI();
 
   // =========================================================
-  // CAMERA SETUP
+  // AUDIO
+  // =========================================================
+  let audioCtx = null;
+  let humOsc = null;
+  let humGain = null;
+  let energyOsc = null;
+  let energyGain = null;
+  let filterNode = null;
+
+  function initAudio() {
+    if (audioCtx) return;
+
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return;
+
+    audioCtx = new AudioContextClass();
+
+    humOsc = audioCtx.createOscillator();
+    humGain = audioCtx.createGain();
+    filterNode = audioCtx.createBiquadFilter();
+    energyOsc = audioCtx.createOscillator();
+    energyGain = audioCtx.createGain();
+
+    humOsc.type = "sine";
+    humOsc.frequency.value = 72;
+
+    filterNode.type = "lowpass";
+    filterNode.frequency.value = 500;
+    filterNode.Q.value = 0.8;
+
+    humGain.gain.value = 0.0001;
+
+    energyOsc.type = "triangle";
+    energyOsc.frequency.value = 180;
+    energyGain.gain.value = 0.0001;
+
+    humOsc.connect(filterNode);
+    filterNode.connect(humGain);
+    humGain.connect(audioCtx.destination);
+
+    energyOsc.connect(energyGain);
+    energyGain.connect(audioCtx.destination);
+
+    humOsc.start();
+    energyOsc.start();
+  }
+
+  async function resumeAudio() {
+    if (!audioCtx) initAudio();
+    if (audioCtx && audioCtx.state === "suspended") {
+      try {
+        await audioCtx.resume();
+      } catch (err) {
+        console.warn("Audio resume failed:", err);
+      }
+    }
+  }
+
+  function updateAudio() {
+    if (!audioCtx || !humOsc || !humGain || !energyOsc || !energyGain || !filterNode) return;
+
+    const e = state.energy;
+    const brightness = 1 - state.leftHandYNorm;
+    const idleAmt = clamp(1 - e * 2.5, 0, 1);
+
+    humOsc.frequency.setTargetAtTime(65 + idleAmt * 18, audioCtx.currentTime, 0.08);
+    humGain.gain.setTargetAtTime(0.01 + idleAmt * 0.02, audioCtx.currentTime, 0.12);
+
+    energyOsc.frequency.setTargetAtTime(170 + e * 420 + brightness * 120, audioCtx.currentTime, 0.05);
+    energyGain.gain.setTargetAtTime(0.001 + e * 0.035, audioCtx.currentTime, 0.08);
+
+    filterNode.frequency.setTargetAtTime(350 + e * 900, audioCtx.currentTime, 0.08);
+  }
+
+  function playBurstSound() {
+    if (!audioCtx) return;
+
+    const t = audioCtx.currentTime;
+
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    const filter = audioCtx.createBiquadFilter();
+
+    osc.type = "square";
+    osc.frequency.setValueAtTime(240, t);
+    osc.frequency.exponentialRampToValueAtTime(75, t + 0.18);
+
+    filter.type = "bandpass";
+    filter.frequency.value = 800;
+    filter.Q.value = 1.2;
+
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.linearRampToValueAtTime(0.07, t + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.22);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    osc.start(t);
+    osc.stop(t + 0.25);
+  }
+
+  // =========================================================
+  // CAMERA
   // =========================================================
   async function getCameras() {
     const devices = await navigator.mediaDevices.enumerateDevices();
@@ -146,6 +358,7 @@
   }
 
   async function populateCameraList() {
+    if (!cameraSelect) return;
     const cameras = await getCameras();
     cameraSelect.innerHTML = "";
 
@@ -182,7 +395,6 @@
 
     stream = await navigator.mediaDevices.getUserMedia(constraints);
     video.srcObject = stream;
-
     await video.play();
 
     const track = stream.getVideoTracks()[0];
@@ -195,7 +407,7 @@
   }
 
   // =========================================================
-  // TENSORFLOW POSE DETECTOR
+  // TENSORFLOW
   // =========================================================
   async function initDetector() {
     if (!window.poseDetection) {
@@ -225,7 +437,7 @@
   }
 
   // =========================================================
-  // PARTICLE SYSTEM
+  // PARTICLES
   // =========================================================
   class Particle {
     constructor() {
@@ -251,24 +463,52 @@
       const dx = state.targetX - this.x;
       const dy = state.targetY - this.y;
       const d = Math.sqrt(dx * dx + dy * dy) + 0.0001;
-
       const nx = dx / d;
       const ny = dy / d;
 
-      const energy = state.energy;
-      const spreadStrength = state.spread;
+      const mode = state.currentMode;
+      const speedHeat = clamp(state.velocityMag / 180, 0, 1);
+      const leftHigh = 1 - state.leftHandYNorm;
 
-      const targetPull = CONFIG.targetPullBase + energy * 0.022;
-      const swirl = CONFIG.swirlBase + energy * 0.038;
-      const maxSpeed = CONFIG.maxSpeedBase + energy * 5.8;
-      const noiseScale = CONFIG.noiseScaleBase + spreadStrength * 0.01;
-      const noiseStrength =
-        CONFIG.noiseStrengthBase + energy * 1.15 + (1 - state.leftHandYNorm) * 0.8;
+      let drag = CONFIG.dragBase;
+      let swirl = CONFIG.swirlBase + state.energy * 0.03;
+      let targetPull = CONFIG.targetPullBase + state.energy * 0.018;
+      let maxSpeed = CONFIG.maxSpeedBase + state.energy * 5.0;
+      let noiseScale = CONFIG.noiseScaleBase + state.spread * 0.008;
+      let noiseStrength = CONFIG.noiseStrengthBase + leftHigh * 0.9 + state.energy * 0.7;
+      let orbitBoost = 1;
+      let galaxySpiral = 0;
+
+      if (mode === "CALM") {
+        drag = 0.975;
+        swirl *= 0.65;
+        targetPull *= 0.9;
+        noiseStrength *= 0.55;
+        maxSpeed *= 0.85;
+      } else if (mode === "CHAOS") {
+        drag = 0.952;
+        swirl *= 1.9;
+        targetPull *= 1.4;
+        noiseStrength *= 1.9;
+        maxSpeed *= 1.6;
+      } else if (mode === "MIRROR") {
+        drag = 0.967;
+        swirl *= 1.2;
+        targetPull *= 1.05;
+        noiseStrength *= 0.9;
+        orbitBoost = 1.35;
+      } else if (mode === "GALAXY") {
+        drag = 0.971;
+        swirl *= 1.35;
+        targetPull *= 0.72;
+        noiseStrength *= 0.65;
+        maxSpeed *= 0.95;
+        galaxySpiral = 0.04;
+      }
 
       const angle = Math.atan2(dy, dx);
-
-      const tangentialX = -Math.sin(angle) * swirl * 18 / (1 + d * 0.01);
-      const tangentialY =  Math.cos(angle) * swirl * 18 / (1 + d * 0.01);
+      const tangentialX = -Math.sin(angle) * swirl * 18 * orbitBoost / (1 + d * 0.01);
+      const tangentialY =  Math.cos(angle) * swirl * 18 * orbitBoost / (1 + d * 0.01);
 
       const noise =
         Math.sin(this.x * noiseScale + t * 0.0007 + this.seed) +
@@ -277,11 +517,18 @@
       const noiseX = Math.cos(noise + angle * 0.7) * noiseStrength * 0.09;
       const noiseY = Math.sin(noise - angle * 0.7) * noiseStrength * 0.09;
 
-      this.vx += nx * targetPull + tangentialX + noiseX;
-      this.vy += ny * targetPull + tangentialY + noiseY;
+      const spiralX = Math.cos(angle + state.galaxySpin) * galaxySpiral;
+      const spiralY = Math.sin(angle + state.galaxySpin) * galaxySpiral;
 
-      this.vx *= CONFIG.drag;
-      this.vy *= CONFIG.drag;
+      this.vx += nx * targetPull + tangentialX + noiseX + spiralX;
+      this.vy += ny * targetPull + tangentialY + noiseY + spiralY;
+
+      if (mode === "MIRROR" && this.x > W * 0.5) {
+        this.vx -= (this.x - W * 0.5) * 0.0008;
+      }
+
+      this.vx *= drag;
+      this.vy *= drag;
 
       const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
       if (speed > maxSpeed) {
@@ -301,7 +548,7 @@
         this.y < -120 || this.y > H + 120
       ) {
         const a = Math.random() * Math.PI * 2;
-        const r = Math.random() * (CONFIG.spreadBase + spreadStrength * 240);
+        const r = Math.random() * (CONFIG.spreadBase + state.spread * 240);
         this.reset(
           state.targetX + Math.cos(a) * r,
           state.targetY + Math.sin(a) * r
@@ -313,23 +560,54 @@
       const dx = this.x - this.px;
       const dy = this.y - this.py;
       const speed = Math.sqrt(dx * dx + dy * dy);
+      const moveHeat = clamp(speed / 5.5, 0, 1);
+      const handBright = 1 - state.leftHandYNorm;
 
-      const hue =
-        (220 + t * 0.01 + this.seed * 40 + state.energy * 90 + (1 - state.leftHandYNorm) * 80) % 360;
+      let hue;
+      let sat = 100;
+      let light = 58 + state.energy * 16 + handBright * 12;
 
-      const alpha = clamp(0.05 + speed * 0.03 + state.energy * 0.14, 0.03, 0.35);
+      if (state.currentMode === "CALM") {
+        hue = 210 + moveHeat * 25 + this.seed * 8;
+        sat = 85;
+        light = 52 + handBright * 8 + moveHeat * 6;
+      } else if (state.currentMode === "CHAOS") {
+        hue = 18 + moveHeat * 35 + handBright * 18 + (t * 0.04 + this.seed * 40) % 30;
+        sat = 100;
+        light = 55 + handBright * 18 + moveHeat * 14;
+      } else if (state.currentMode === "MIRROR") {
+        hue = 290 + moveHeat * 35 + this.seed * 16;
+        sat = 90;
+        light = 58 + handBright * 10;
+      } else {
+        hue = 220 + state.galaxySpin * 100 + this.seed * 28;
+        sat = 95;
+        light = 55 + handBright * 12 + moveHeat * 8;
+      }
+
+      const alpha = clamp(0.05 + speed * 0.03 + state.energy * 0.14, 0.03, 0.38);
       const lw =
         CONFIG.baseLineWidth +
         this.width * 0.8 +
         state.spread * 1.8 +
         speed * 0.03;
 
-      ctx.strokeStyle = `hsla(${hue}, 100%, ${58 + state.energy * 18}%, ${alpha})`;
+      ctx.strokeStyle = `hsla(${hue % 360}, ${sat}%, ${light}%, ${alpha})`;
       ctx.lineWidth = lw;
       ctx.beginPath();
       ctx.moveTo(this.px, this.py);
       ctx.lineTo(this.x, this.y);
       ctx.stroke();
+
+      if (state.currentMode === "MIRROR") {
+        const mx1 = W - this.px;
+        const mx2 = W - this.x;
+        ctx.strokeStyle = `hsla(${(hue + 18) % 360}, ${sat}%, ${light}%, ${alpha * 0.72})`;
+        ctx.beginPath();
+        ctx.moveTo(mx1, this.py);
+        ctx.lineTo(mx2, this.y);
+        ctx.stroke();
+      }
     }
   }
 
@@ -360,6 +638,47 @@
   }
 
   // =========================================================
+  // MODE CONTROL
+  // =========================================================
+  function setMode(mode) {
+    if (state.currentMode === mode) return;
+    state.currentMode = mode;
+    state.modeSince = nowMs();
+    modeBadge.textContent = `MODE: ${mode}`;
+  }
+
+  function updateModeLogic() {
+    const t = nowMs();
+    const heldLongEnough = (t - state.modeSince) > CONFIG.stateHoldMs;
+
+    if (state.handsWide) {
+      setMode("MIRROR");
+      return;
+    }
+
+    if (state.bigGesture) {
+      setMode("CHAOS");
+      return;
+    }
+
+    if (state.handsUp) {
+      setMode("CALM");
+      return;
+    }
+
+    if (state.stillness > 0.75) {
+      setMode("GALAXY");
+      return;
+    }
+
+    if (!heldLongEnough && state.currentMode !== "CALM") return;
+
+    if (state.energy < 0.22) setMode("CALM");
+    else if (state.energy > 0.62) setMode("CHAOS");
+    else setMode("CALM");
+  }
+
+  // =========================================================
   // POSE INPUT
   // =========================================================
   async function updatePoseInput() {
@@ -370,9 +689,7 @@
 
     let poses = [];
     try {
-      poses = await detector.estimatePoses(video, {
-        flipHorizontal: true
-      });
+      poses = await detector.estimatePoses(video, { flipHorizontal: true });
     } catch (err) {
       console.error("Pose estimation error:", err);
       state.activePose = false;
@@ -437,7 +754,16 @@
     state.rawTargetX = mapRange(primaryX, 0, video.videoWidth, W, 0);
     state.rawTargetY = mapRange(primaryY, 0, video.videoHeight, 0, H);
 
+    const dx = state.rawTargetX - state.prevRawTargetX;
+    const dy = state.rawTargetY - state.prevRawTargetY;
+    state.velocityMag = lerp(state.velocityMag, Math.sqrt(dx * dx + dy * dy), 0.22);
+    state.prevRawTargetX = state.rawTargetX;
+    state.prevRawTargetY = state.rawTargetY;
+
     let spread = 0.22;
+    let handsWide = false;
+    let handsUp = false;
+
     if (leftWrist && rightWrist) {
       const handDistance = dist(leftWrist, rightWrist);
       spread = mapRange(
@@ -447,35 +773,47 @@
         0.08,
         1.0
       );
+      handsWide = handDistance > CONFIG.bigGestureThreshold * 1.6;
+
+      const avgWristY = (leftWrist.y + rightWrist.y) * 0.5;
+      const avgShoulderY = (leftShoulder.y + rightShoulder.y) * 0.5;
+      handsUp = avgWristY < avgShoulderY - 18;
     }
 
-    // Energy:
-    // - right hand moving the target
-    // - left hand higher = more chaos/energy
-    // - hands apart = more spread
     const leftHandRaised = 1 - state.leftHandYNorm;
     const horizontalReach = Math.abs(state.rightHandXNorm - 0.5) * 2;
+    const bigGesture = state.velocityMag > CONFIG.bigGestureThreshold;
 
     const energy =
-      0.08 +
-      leftHandRaised * 0.42 +
-      spread * 0.25 +
-      horizontalReach * 0.18;
+      0.07 +
+      leftHandRaised * 0.36 +
+      spread * 0.22 +
+      horizontalReach * 0.16 +
+      clamp(state.velocityMag / 220, 0, 0.32);
 
     state.rawEnergy = clamp(energy, CONFIG.defaultEnergy, 1);
     state.rawSpread = clamp(spread, 0.08, 1.0);
+    state.handsWide = handsWide;
+    state.handsUp = handsUp;
+    state.bigGesture = bigGesture;
 
-    // forward-ish gesture approximation:
-    // if wrists come close to the nose / center quickly,
-    // trigger a burst. not perfect depth, but reads well.
+    const stillAmt = clamp(1 - state.velocityMag / CONFIG.idleStillnessThreshold, 0, 1);
+    state.stillness = lerp(state.stillness, stillAmt, 0.08);
+
     if (nose && rightWrist) {
       const wristToNose = dist(rightWrist, nose);
-      if (wristToNose < 65 && state.rawEnergy > 0.55) {
+      if (
+        wristToNose < 65 &&
+        state.rawEnergy > 0.55 &&
+        nowMs() - lastBurstAt > CONFIG.burstCooldownMs
+      ) {
         state.burstRequested = true;
+        lastBurstAt = nowMs();
       }
     }
 
     state.activePose = true;
+    state.lastPoseSeenAt = nowMs();
     return true;
   }
 
@@ -530,19 +868,83 @@
       state.rawTargetY = mapRange(my, 0, motionCanvas.height, 0, H);
       state.rawEnergy = clamp(active / 320, 0.08, 0.85);
       state.rawSpread = clamp(active / 480, 0.12, 0.9);
+      state.velocityMag = lerp(state.velocityMag, active * 1.8, 0.15);
+      state.bigGesture = active > 140;
+      state.handsWide = false;
+      state.handsUp = false;
+      state.stillness = lerp(state.stillness, active < 65 ? 0.8 : 0.15, 0.06);
 
-      if (state.rawEnergy > 0.7) {
+      if (state.rawEnergy > 0.7 && nowMs() - lastBurstAt > CONFIG.burstCooldownMs) {
         state.burstRequested = true;
+        lastBurstAt = nowMs();
       }
     } else {
       state.rawEnergy = lerp(state.rawEnergy, 0.08, 0.08);
       state.rawSpread = lerp(state.rawSpread, 0.2, 0.08);
+      state.velocityMag = lerp(state.velocityMag, 0, 0.06);
+      state.bigGesture = false;
+      state.handsWide = false;
+      state.handsUp = false;
+      state.stillness = lerp(state.stillness, 1, 0.04);
     }
   }
 
   // =========================================================
-  // DRAW DEBUG
+  // VISUAL HELPERS
   // =========================================================
+  function drawBackgroundGlow(t) {
+    const pulse = 0.5 + Math.sin(t * 0.001) * 0.5;
+    let hue = 215;
+    let alpha = 0.06;
+
+    if (state.currentMode === "CALM") {
+      hue = 210;
+      alpha = 0.05;
+    } else if (state.currentMode === "CHAOS") {
+      hue = 18;
+      alpha = 0.08;
+    } else if (state.currentMode === "MIRROR") {
+      hue = 290;
+      alpha = 0.06;
+    } else if (state.currentMode === "GALAXY") {
+      hue = 235 + Math.sin(t * 0.0005) * 20;
+      alpha = 0.075;
+    }
+
+    const grad = ctx.createRadialGradient(
+      state.targetX, state.targetY, 0,
+      state.targetX, state.targetY, Math.max(W, H) * 0.45
+    );
+    grad.addColorStop(0, `hsla(${hue}, 100%, 60%, ${alpha + pulse * 0.03})`);
+    grad.addColorStop(0.4, `hsla(${hue}, 100%, 35%, ${alpha * 0.4})`);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+
+    ctx.save();
+    ctx.globalCompositeOperation = "screen";
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+
+  function drawGalaxyStars(t) {
+    if (state.currentMode !== "GALAXY") return;
+
+    ctx.save();
+    const starCount = 36;
+    for (let i = 0; i < starCount; i++) {
+      const a = i / starCount * Math.PI * 2 + t * 0.00015;
+      const r = 80 + (i % 8) * 28 + Math.sin(t * 0.001 + i) * 12;
+      const x = state.targetX + Math.cos(a) * r;
+      const y = state.targetY + Math.sin(a) * r;
+      const size = 1.2 + (i % 3);
+      ctx.fillStyle = `rgba(255,255,255,${0.18 + (i % 4) * 0.06})`;
+      ctx.beginPath();
+      ctx.arc(x, y, size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   function drawDebugHUD() {
     if (!debugOn) return;
 
@@ -578,21 +980,85 @@
 
     ctx.fillStyle = "rgba(255,255,255,0.9)";
     ctx.font = "14px Arial";
-    ctx.fillText(`Energy: ${state.energy.toFixed(2)}`, 20, 34);
-    ctx.fillText(`Spread: ${state.spread.toFixed(2)}`, 20, 54);
-    ctx.fillText(`Pose: ${state.activePose ? "ON" : "FALLBACK"}`, 20, 74);
+    ctx.fillText(`Energy: ${state.energy.toFixed(2)}`, 20, 64);
+    ctx.fillText(`Spread: ${state.spread.toFixed(2)}`, 20, 84);
+    ctx.fillText(`Velocity: ${state.velocityMag.toFixed(1)}`, 20, 104);
+    ctx.fillText(`Pose: ${state.activePose ? "ON" : "FALLBACK"}`, 20, 124);
+    ctx.fillText(`Mode: ${state.currentMode}`, 20, 144);
+    ctx.fillText(`Hands Up: ${state.handsUp}`, 20, 164);
+    ctx.fillText(`Hands Wide: ${state.handsWide}`, 20, 184);
 
     ctx.restore();
+  }
+
+  function updateInstructionOverlay(t) {
+    const elapsed = nowMs() - experienceStartedAt;
+    let opacity = 1;
+
+    if (elapsed > CONFIG.instructionFadeAfterMs) {
+      opacity = 0;
+    } else if (elapsed > CONFIG.instructionFadeAfterMs - 2000) {
+      opacity = mapRange(
+        elapsed,
+        CONFIG.instructionFadeAfterMs - 2000,
+        CONFIG.instructionFadeAfterMs,
+        1,
+        0
+      );
+    }
+
+    const pulse = 0.9 + Math.sin(t * CONFIG.instructionPulseSpeed) * 0.1;
+    instructionOverlay.style.opacity = String(opacity);
+    instructionInner.style.transform = `scale(${pulse})`;
+  }
+
+  function enterFullscreenIfPossible() {
+    const el = document.documentElement;
+    if (document.fullscreenElement) return;
+
+    const fn =
+      el.requestFullscreen ||
+      el.webkitRequestFullscreen ||
+      el.msRequestFullscreen;
+
+    if (fn) {
+      try {
+        fn.call(el);
+      } catch (err) {
+        console.warn("Fullscreen request failed:", err);
+      }
+    }
+  }
+
+  function hideUIForKiosk() {
+    if (!ui) return;
+    kioskMode = true;
+    ui.style.transition = "opacity 0.7s ease";
+    ui.style.opacity = "0";
+    ui.style.pointerEvents = "none";
+  }
+
+  function showUI() {
+    if (!ui) return;
+    ui.style.opacity = "1";
+    ui.style.pointerEvents = "auto";
+  }
+
+  function scheduleKioskHide() {
+    if (uiHideTimeout) clearTimeout(uiHideTimeout);
+    uiHideTimeout = setTimeout(() => {
+      hideUIForKiosk();
+    }, CONFIG.kioskHideDelayMs);
   }
 
   // =========================================================
   // ANIMATE
   // =========================================================
-  async function animate(now) {
+  async function animate(t) {
     if (!started) return;
 
-    const dt = Math.min(0.033, (now - lastTime) / 1000);
-    lastTime = now;
+    const dt = Math.min(0.033, (t - lastTime) / 1000);
+    lastTime = t;
 
     const poseWorked = await updatePoseInput();
     if (!poseWorked) {
@@ -603,54 +1069,73 @@
     state.targetY = lerp(state.targetY, state.rawTargetY, CONFIG.poseSmoothing);
     state.energy = lerp(state.energy, state.rawEnergy, CONFIG.energySmoothing);
     state.spread = lerp(state.spread, state.rawSpread, CONFIG.spreadSmoothing);
+    state.galaxySpin += state.currentMode === "GALAXY" ? 0.01 : 0.002;
+
+    updateModeLogic();
+    updateAudio();
 
     ctx.fillStyle = `rgba(0,0,0,${CONFIG.backgroundFade})`;
     ctx.fillRect(0, 0, W, H);
 
+    drawBackgroundGlow(t);
+    drawGalaxyStars(t);
+
     ctx.globalCompositeOperation = "lighter";
 
     for (let i = 0; i < particles.length; i++) {
-      particles[i].update(dt, now);
-      particles[i].draw(now);
+      particles[i].update(dt, t);
+      particles[i].draw(t);
     }
 
     if (state.burstRequested) {
       burstAt(state.targetX, state.targetY);
+      playBurstSound();
       state.burstRequested = false;
     }
 
     ctx.globalCompositeOperation = "source-over";
 
+    updateInstructionOverlay(t);
     drawDebugHUD();
 
     animationId = requestAnimationFrame(animate);
   }
 
   // =========================================================
-  // START EXPERIENCE
+  // START
   // =========================================================
   async function startExperience() {
     if (started) return;
 
-    startBtn.disabled = true;
-    startBtn.textContent = "Starting...";
+    if (startBtn) {
+      startBtn.disabled = true;
+      startBtn.textContent = "Starting...";
+    }
 
     try {
-      await startCamera(selectedDeviceId || cameraSelect.value || undefined);
+      await resumeAudio();
+      await startCamera(selectedDeviceId || (cameraSelect ? cameraSelect.value : undefined) || undefined);
       await initDetector();
 
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, W, H);
 
       started = true;
+      experienceStartedAt = nowMs();
       lastTime = performance.now();
+
+      scheduleKioskHide();
       animationId = requestAnimationFrame(animate);
 
-      startBtn.textContent = "Running";
+      if (startBtn) {
+        startBtn.textContent = "Running";
+      }
     } catch (err) {
       console.error(err);
-      startBtn.disabled = false;
-      startBtn.textContent = "Start Experience";
+      if (startBtn) {
+        startBtn.disabled = false;
+        startBtn.textContent = "Start Experience";
+      }
       alert("Could not start camera/pose detection. Check camera permissions and reload.");
     }
   }
@@ -658,31 +1143,50 @@
   // =========================================================
   // EVENTS
   // =========================================================
-  startBtn.addEventListener("click", startExperience);
+  if (startBtn) {
+    startBtn.addEventListener("click", async () => {
+      firstGestureActivated = true;
+      await resumeAudio();
+      enterFullscreenIfPossible();
+      await startExperience();
+    });
+  }
 
-  burstBtn.addEventListener("click", () => {
-    state.burstRequested = true;
-  });
+  if (burstBtn) {
+    burstBtn.addEventListener("click", async () => {
+      await resumeAudio();
+      state.burstRequested = true;
+      scheduleKioskHide();
+    });
+  }
 
-  resetBtn.addEventListener("click", () => {
-    resetParticles();
-  });
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      resetParticles();
+      scheduleKioskHide();
+    });
+  }
 
-  debugBtn.addEventListener("click", () => {
-    debugOn = !debugOn;
-    updateDebugUI();
-  });
+  if (debugBtn) {
+    debugBtn.addEventListener("click", () => {
+      debugOn = !debugOn;
+      updateDebugUI();
+      if (!debugOn && kioskMode) hideUIForKiosk();
+    });
+  }
 
-  cameraSelect.addEventListener("change", async () => {
-    selectedDeviceId = cameraSelect.value;
-    if (started) {
-      try {
-        await startCamera(selectedDeviceId);
-      } catch (err) {
-        console.error("Camera switch failed:", err);
+  if (cameraSelect) {
+    cameraSelect.addEventListener("change", async () => {
+      selectedDeviceId = cameraSelect.value;
+      if (started) {
+        try {
+          await startCamera(selectedDeviceId);
+        } catch (err) {
+          console.error("Camera switch failed:", err);
+        }
       }
-    }
-  });
+    });
+  }
 
   if (navigator.mediaDevices?.addEventListener) {
     navigator.mediaDevices.addEventListener("devicechange", async () => {
@@ -694,29 +1198,50 @@
     });
   }
 
-  window.addEventListener("keydown", e => {
+  window.addEventListener("keydown", async e => {
     const key = e.key.toLowerCase();
 
     if (key === "b") {
+      await resumeAudio();
       state.burstRequested = true;
     }
-
     if (key === "d") {
       debugOn = !debugOn;
       updateDebugUI();
     }
-
     if (key === "r") {
       resetParticles();
     }
+    if (key === "f") {
+      enterFullscreenIfPossible();
+    }
+    if (key === "u") {
+      showUI();
+      kioskMode = false;
+    }
+    if (key === "h") {
+      hideUIForKiosk();
+    }
   });
 
+  document.addEventListener("pointerdown", async () => {
+    if (!firstGestureActivated) {
+      firstGestureActivated = true;
+      await resumeAudio();
+      enterFullscreenIfPossible();
+      if (!started) {
+        await startExperience();
+      }
+    } else {
+      await resumeAudio();
+    }
+  }, { passive: true });
+
   // =========================================================
-  // INIT CAMERA MENU
+  // INIT
   // =========================================================
   async function init() {
     try {
-      // temporary permission request helps labels show up
       const temp = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       temp.getTracks().forEach(t => t.stop());
     } catch (err) {
@@ -728,6 +1253,23 @@
     } catch (err) {
       console.error("Could not populate cameras:", err);
     }
+
+    try {
+      initAudio();
+    } catch (err) {
+      console.warn("Audio init skipped:", err);
+    }
+
+    // Try auto-start lightly; browser may block until user gesture.
+    setTimeout(async () => {
+      if (!started) {
+        try {
+          await startExperience();
+        } catch (err) {
+          console.warn("Auto-start blocked or failed:", err);
+        }
+      }
+    }, 400);
   }
 
   init();
