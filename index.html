@@ -2,30 +2,14 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>BxCM Move the Energy</title>
   <link rel="stylesheet" href="style.css" />
 
-  <!-- TensorFlow (full bundle) -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-
-  <!-- Pose Detection -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
 </head>
 <body>
-  <!-- Visitor-facing intro -->
-  <div id="welcomeOverlay" aria-hidden="true">
-    <div class="welcome-inner">
-      <div class="welcome-kicker">Bronx Children’s Museum</div>
-      <h1>MOVE THE ENERGY</h1>
-      <p>Step in. Move your body. Shape light, color, and sound.</p>
-    </div>
-  </div>
-
-  <!-- Staff controls -->
   <div id="ui">
     <div class="topbar">
       <div class="brand">BxCM Move the Energy</div>
@@ -42,14 +26,11 @@
     </div>
 
     <div class="info">
-      Staff view. Press U to show controls again after kiosk mode hides them.
+      Staff controls. Press U to show controls again after kiosk mode hides them.
     </div>
   </div>
 
-  <!-- Hidden but required for camera / pose input -->
   <video id="video" playsinline muted autoplay></video>
-
-  <!-- Main visual surface -->
   <canvas id="canvas"></canvas>
 
   <script src="app.js"></script>
