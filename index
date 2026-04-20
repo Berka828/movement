@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  />
+  <title>BxCM Gesture Tendrils</title>
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- TensorFlow.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+
+  <!-- Pose Detection -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+</head>
+<body>
+  <div id="ui">
+    <div class="topbar">
+      <div class="brand">BxCM Gesture Tendrils</div>
+
+      <div class="controls">
+        <label for="cameraSelect">Camera</label>
+        <select id="cameraSelect"></select>
+
+        <button id="startBtn">Start Experience</button>
+        <button id="burstBtn">Burst</button>
+        <button id="resetBtn">Reset</button>
+        <button id="debugBtn">Debug: Off</button>
+      </div>
+    </div>
+
+    <div class="info">
+      Move your body to control the visuals. Right hand steers. Left hand changes chaos.
+    </div>
+  </div>
+
+  <video id="video" playsinline muted></video>
+  <canvas id="canvas"></canvas>
+
+  <script src="app.js"></script>
+</body>
+</html>
