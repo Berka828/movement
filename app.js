@@ -576,8 +576,8 @@ function drawCoveredAsset(drawFn, assetW, assetH, coverWidthRatio = 1.0, coverHe
         (x, y, w, h) => hiddenCtx.drawImage(revealVideo, x, y, w, h),
         vw,
         vh,
-        0.8,
-        0.7
+        0.5,
+        0.4
       );
     } else {
       hiddenCtx.fillStyle = "#0f2a44";
